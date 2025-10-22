@@ -89,7 +89,7 @@ early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_wei
 print("\nTraining the demand model (with sequences)...")
 history = demand_model.fit(
     X_train_seq, y_train_seq, # <--- ใช้ข้อมูล Sequence
-    epochs=100,
+    epochs=20,
     batch_size=64, 
     validation_data=(X_val_seq, y_val_seq), # <--- ใช้ข้อมูล Sequence
     callbacks=[early_stopping], 
