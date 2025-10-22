@@ -26,8 +26,10 @@ features = [
     'week_of_year',
     'Qty_lag_1',       
     'Qty_lag_7',       
-    'Qty_roll_mean_7' 
-    'Has_Promotion' 
+    'Qty_roll_mean_7', 
+    'Has_Promotion',
+    'is_weekend', 
+    'is_month_end'
 ]
 target = 'Total_Qty'
 
