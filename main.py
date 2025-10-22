@@ -15,7 +15,18 @@ DATA_FILE = 'Amazon Sale Report.csv'
 df = load_and_preprocess_data(DATA_FILE)
 
 # กำหนด features (X) และ target (y)
-features =
+# (เติม list ของ features)
+# นี่คือข้อมูลที่เราจะใช้ "ป้อน" โมเดล
+features = [
+    'SKU', 
+    'Category', 
+    'Size', 
+    'Avg_Price', 
+    'day_of_week', 
+    'month', 
+    'week_of_year'
+]
+# นี่คือสิ่งที่เราต้องการ "ทำนาย"
 target = 'Total_Qty'
 
 X = df[features].values
@@ -30,8 +41,9 @@ X_train_scaled = scaler_X.transform(X_train)
 X_test_scaled = scaler_X.transform(X_test)
 
 # Reshape ข้อมูลสำหรับ LSTM [samples, timesteps, features]
-X_train_reshaped = X_train_scaled.reshape((X_train_scaled.shape, 1, X_train_scaled.shape[1]))
-X_test_reshaped = X_test_scaled.reshape((X_test_scaled.shape, 1, X_test_scaled.shape[1]))
+# (แก้ไขไวยากรณ์ .reshape ที่ผิดพลาด)
+X_train_reshaped = X_train_scaled.reshape((X_train_scaled.shape[0], 1, X_train_scaled.shape[1]))
+X_test_reshaped = X_test_scaled.reshape((X_test_scaled.shape[0], 1, X_test_scaled.shape[1]))
 
 # --- 2. Build and Train Demand Model ---
 input_shape = (X_train_reshaped.shape[1], X_train_reshaped.shape[2])
@@ -60,28 +72,38 @@ print("-------------------------\n")
 print("Starting price optimization...")
 
 # สมมติว่าเราต้องการหาราคาสำหรับสินค้า 3 ชนิด (เลือก SKU ที่มีข้อมูลเยอะ)
-# คุณต้องแทนที่ค่าเหล่านี้ด้วย SKU และต้นทุนจริงของคุณ
-target_skus_encoded =.astype('category').cat.codes, 
-                       df.astype('category').cat.codes[1], 
-                       df.astype('category').cat.codes[2]] 
-PRODUCT_COSTS = np.array() # ต้นทุนสมมติ
+# (แก้ไข logic การดึง SKU ที่เข้ารหัสแล้ว)
+# เราจะเลือก 3 SKU แรกที่พบในข้อมูลที่ผ่านการประมวลผลแล้ว
+target_skus_encoded = df['SKU'].unique()[0:3]
+
+# (เติมต้นทุนสมมติ)
+PRODUCT_COSTS = np.array([300, 400, 600]) # ต้นทุนสมมติ
 NUM_PRODUCTS = len(target_skus_encoded)
 
 def profit_objective_function(prices):
     """
     ฟังก์ชันคำนวณกำไร (ที่เราจะหาค่าต่ำสุดของ -profit)
     """
-    model_inputs =
+    # (เติม list ว่าง)
+    model_inputs = []
+    
+    # --- ปรับปรุง Logic การสร้าง Input ---
+    # เราจะใช้ค่าเฉลี่ยของ features ทั้งหมดจาก X_train เป็น "ฐาน"
+    avg_features_vector = np.mean(X_train, axis=0)
     
     # สร้าง input สำหรับแต่ละราคาสินค้า
     for i, price in enumerate(prices):
-        # ใช้ค่าเฉลี่ยของ features อื่นๆ จากข้อมูล training
-        # ยกเว้น SKU และ Price
-        avg_features = np.mean(X_train[:, [1, 2, 3, 4, 5]], axis=0)
+        # คัดลอก "ฐาน" ของ feature
+        current_features = avg_features_vector.copy()
         
-        # สร้าง feature vector:
-        current_features = np.concatenate(([target_skus_encoded[i]], avg_features[:2], [price], avg_features[2:]))
+        # แทนที่ 'SKU' (index 0) ด้วย SKU เป้าหมาย
+        current_features[0] = target_skus_encoded[i]
+        
+        # แทนที่ 'Avg_Price' (index 3) ด้วยราคาใหม่ที่เรากำลังทดสอบ
+        current_features[3] = price
+        
         model_inputs.append(current_features)
+    # --- สิ้นสุดการปรับปรุง Logic ---
 
     model_inputs_scaled = scaler_X.transform(np.array(model_inputs))
     model_inputs_reshaped = model_inputs_scaled.reshape((NUM_PRODUCTS, 1, len(features)))
@@ -112,5 +134,7 @@ optimizer = ParticleSwarmOptimizer(
 
 optimal_prices, max_profit = optimizer.optimize()
 
+# max_profit ที่ได้จาก optimizer จะติดลบ (เพราะเราหาค่าต่ำสุดของ -profit)
+# จึงต้องคูณ -1 กลับ
 print(f"\nOptimal Prices Found: {np.round(optimal_prices, 2)}")
-print(f"Maximum Estimated Profit: {max_profit:.2f}")
+print(f"Maximum Estimated Profit: {-max_profit:.2f}")
