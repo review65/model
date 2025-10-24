@@ -1,65 +1,20 @@
-# main.py (ULTIMATE FIX - Windows Compatible)
+# main.py (IMPROVED VERSION)
 import numpy as np
 import pandas as pd
-import os
-import glob
-from sklearn.preprocessing import StandardScaler, RobustScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 import matplotlib.pyplot as plt
-import warnings
-warnings.filterwarnings('ignore')
 
 from data_preparation import load_and_preprocess_data
 from demand_model import build_lstm_model
 from price_optimizer import ParticleSwarmOptimizer
 
-def find_csv_file():
-    """หาไฟล์ CSV อัตโนมัติ"""
-    print("🔍 Searching for CSV file...")
-    
-    search_patterns = [
-        r"E:\model\Amazon Sale Report.csv",
-        r"E:\model\model\Amazon Sale Report.csv",
-        r"E:\model\data\Amazon Sale Report.csv",
-        "./Amazon Sale Report.csv",
-        "../Amazon Sale Report.csv",
-    ]
-    
-    for pattern in search_patterns:
-        if os.path.exists(pattern):
-            print(f"✅ Found: {pattern}")
-            return pattern
-    
-    print("   Searching recursively...")
-    search_dirs = [r"E:\model", ".", ".."]
-    
-    for search_dir in search_dirs:
-        if os.path.exists(search_dir):
-            csv_files = glob.glob(
-                os.path.join(search_dir, "**", "*amazon*.csv"), 
-                recursive=True
-            )
-            csv_files += glob.glob(
-                os.path.join(search_dir, "**", "*sale*.csv"), 
-                recursive=True
-            )
-            
-            if csv_files:
-                print(f"✅ Found: {csv_files[0]}")
-                return csv_files[0]
-    
-    print("\n❌ CSV file not found automatically!")
-    csv_path = input("Enter full path to CSV: ").strip().strip('"')
-    
-    if os.path.exists(csv_path):
-        return csv_path
-    else:
-        raise FileNotFoundError(f"File not found: {csv_path}")
-
 def create_sequences(X, y, time_steps=10):
-    """สร้าง sequences สำหรับ LSTM"""
+    """
+    สร้าง "หน้าต่าง" ข้อมูลแบบ Time Series
+    """
     Xs, ys = [], []
     for i in range(len(X) - time_steps):
         v = X[i:(i + time_steps)]
@@ -67,74 +22,13 @@ def create_sequences(X, y, time_steps=10):
         ys.append(y[i + time_steps])
     return np.array(Xs), np.array(ys)
 
-def safe_mape(y_true, y_pred, epsilon=1.0):
-    """
-    คำนวณ MAPE ที่ปลอดภัย (ไม่ระเบิดเมื่อมีค่า 0)
-    """
-    # ใช้เฉพาะค่าที่ > epsilon
-    mask = y_true > epsilon
-    if mask.sum() == 0:
-        return 0.0
-    return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
+SEQUENCE_LENGTH = 14  # เพิ่มเป็น 14 วัน (2 สัปดาห์)
 
-# =====================================
-# MAIN EXECUTION
-# =====================================
-
-print("=" * 70)
-print("DEMAND FORECASTING MODEL - ULTIMATE FIX VERSION")
-print("=" * 70)
-
-SEQUENCE_LENGTH = 10  # ลดลงเหลือ 10 วัน (เพราะข้อมูลน้อย)
-
-# --- 1. Find and Load Data ---
-try:
-    DATA_FILE = find_csv_file()
-except FileNotFoundError as e:
-    print(f"\n❌ Error: {e}")
-    exit(1)
-
-print(f"\n📂 Using file: {DATA_FILE}")
-print("=" * 70)
-
+# --- 1. Data Loading and Preparation ---
+DATA_FILE = r'E:\model\model\Amazon Sale Report.csv'
 df = load_and_preprocess_data(DATA_FILE)
 
-# ตรวจสอบข้อมูล
-print("\n" + "=" * 70)
-print("DATA QUALITY CHECK")
-print("=" * 70)
-print(f"Total records: {len(df)}")
-print(f"Date range: {df['Date'].min()} to {df['Date'].max()}")
-print(f"Days: {(df['Date'].max() - df['Date'].min()).days}")
-print(f"Unique SKUs: {df['SKU'].nunique()}")
-
-print(f"\nTarget variable (Total_Qty) statistics:")
-print(f"  Mean:   {df['Total_Qty'].mean():.2f}")
-print(f"  Median: {df['Total_Qty'].median():.2f}")
-print(f"  Std:    {df['Total_Qty'].std():.2f}")
-print(f"  Min:    {df['Total_Qty'].min():.2f}")
-print(f"  Max:    {df['Total_Qty'].max():.2f}")
-print(f"  Zero values: {(df['Total_Qty'] == 0).sum()} ({(df['Total_Qty'] == 0).sum()/len(df)*100:.1f}%)")
-
-# ⚠️ ปัญหาหลัก: ข้อมูลมีค่า 0 เยอะมาก!
-zero_pct = (df['Total_Qty'] == 0).sum() / len(df) * 100
-if zero_pct > 50:
-    print(f"\n⚠️  WARNING: {zero_pct:.1f}% of data has zero demand!")
-    print("   This will significantly reduce model performance.")
-    print("   Consider:")
-    print("   1. Removing SKUs with too many zeros")
-    print("   2. Using classification (demand vs no demand) + regression")
-    print("   3. Aggregating to weekly instead of daily")
-
-# แก้ไข: ลบ SKUs ที่มีค่า 0 มากกว่า 70%
-print("\n🔧 Filtering out low-activity SKUs...")
-sku_zero_pct = df.groupby('SKU')['Total_Qty'].apply(lambda x: (x == 0).sum() / len(x) * 100)
-good_skus = sku_zero_pct[sku_zero_pct < 70].index
-df = df[df['SKU'].isin(good_skus)].copy()
-print(f"   Kept {len(good_skus)} SKUs (dropped {len(sku_zero_pct) - len(good_skus)} low-activity SKUs)")
-print(f"   New dataset size: {len(df)} records")
-
-# *** FEATURES LIST ***
+# *** UPDATED FEATURES LIST ***
 features = [
     'SKU', 'Category', 'Size', 'Avg_Price', 'Max_Price', 'Min_Price', 'Std_Price',
     'day_of_week', 'month', 'week_of_year', 'day_of_month', 'quarter',
@@ -150,64 +44,56 @@ features = [
 ]
 
 target = 'Total_Qty'
-
-# ตรวจสอบ features
-missing_features = [f for f in features if f not in df.columns]
-if missing_features:
-    print(f"\n⚠️  Missing features: {missing_features}")
-    features = [f for f in features if f in df.columns]
-
 NUM_FEATURES = len(features)
 print(f"\nTotal features: {NUM_FEATURES}")
 
-# --- 2. Time-based Split ---
+# --- 2. Time-based Train/Val/Test Split (แก้ปัญหา Data Leakage) ---
 print("\n=== Time-based Data Split ===")
 df = df.sort_values(by=['SKU', 'Date'])
 
+# หาจำนวนข้อมูลทั้งหมด
 total_records = len(df)
-train_end_idx = int(total_records * 0.7)
-val_end_idx = int(total_records * 0.85)
+train_end_idx = int(total_records * 0.7)   # 70% Train
+val_end_idx = int(total_records * 0.85)    # 15% Val, 15% Test
 
 df_train = df.iloc[:train_end_idx].copy()
 df_val = df.iloc[train_end_idx:val_end_idx].copy()
 df_test = df.iloc[val_end_idx:].copy()
 
-print(f"Train: {len(df_train)} ({len(df_train)/total_records*100:.1f}%)")
-print(f"       {df_train['Date'].min()} to {df_train['Date'].max()}")
-print(f"Val:   {len(df_val)} ({len(df_val)/total_records*100:.1f}%)")
-print(f"       {df_val['Date'].min()} to {df_val['Date'].max()}")
-print(f"Test:  {len(df_test)} ({len(df_test)/total_records*100:.1f}%)")
-print(f"       {df_test['Date'].min()} to {df_test['Date'].max()}")
+print(f"Train period: {df_train['Date'].min()} to {df_train['Date'].max()}")
+print(f"Val period:   {df_val['Date'].min()} to {df_val['Date'].max()}")
+print(f"Test period:  {df_test['Date'].min()} to {df_test['Date'].max()}")
 
-# --- 3. Scaling (ใช้ RobustScaler แทน StandardScaler - ดีกว่าเมื่อมี outliers) ---
-print("\n=== Scaling Features ===")
+# --- 3. Fit Scaler เฉพาะ Train Set ---
+print("\n=== Fitting Scaler on Train Set ONLY ===")
 X_train_raw = df_train[features].values
 y_train_raw = df_train[target].values
 
-# ใช้ RobustScaler (ทนทานต่อ outliers กว่า)
-scaler_X = RobustScaler()
+scaler_X = StandardScaler()
 scaler_X.fit(X_train_raw)
 
+# Scale ทุก Set
 X_train_scaled = scaler_X.transform(X_train_raw)
 X_val_scaled = scaler_X.transform(df_val[features].values)
 X_test_scaled = scaler_X.transform(df_test[features].values)
 
-print("✅ RobustScaler fitted on train set")
+# Log Transform Target
+y_train_log = np.log1p(y_train_raw)
+y_val_log = np.log1p(df_val[target].values)
+y_test_raw = df_test[target].values  # เก็บ raw สำหรับ evaluation
 
-# Log Transform (เพิ่ม constant เล็กน้อยเพื่อจัดการกับ 0)
-y_train_log = np.log1p(y_train_raw + 0.1)  # +0.1 เพื่อหลีกเลี่ยง log(0)
-y_val_log = np.log1p(df_val[target].values + 0.1)
-y_test_raw = df_test[target].values
-
-# --- 4. Create Sequences Per SKU ---
+# --- 4. สร้าง Sequences Per SKU ---
 print("\n=== Creating Sequences Per SKU ===")
 
 def create_sequences_per_sku(X_scaled, y_log, df_subset, seq_length):
+    """สร้าง sequences โดยแยกตาม SKU"""
     all_X_seq = []
     all_y_seq = []
     
     for sku_code in df_subset['SKU'].unique():
         sku_indices = df_subset[df_subset['SKU'] == sku_code].index
+        
+        # Map indices กลับไปหา position ใน X_scaled
         sku_positions = [df_subset.index.get_loc(idx) for idx in sku_indices]
         
         if len(sku_positions) > seq_length:
@@ -229,25 +115,19 @@ X_train_seq, y_train_seq = create_sequences_per_sku(X_train_scaled, y_train_log,
 X_val_seq, y_val_seq = create_sequences_per_sku(X_val_scaled, y_val_log, df_val, SEQUENCE_LENGTH)
 X_test_seq, y_test_seq_raw = create_sequences_per_sku(X_test_scaled, y_test_raw, df_test, SEQUENCE_LENGTH)
 
-print(f"X_train: {X_train_seq.shape}, y_train: {y_train_seq.shape}")
-print(f"X_val:   {X_val_seq.shape}, y_val: {y_val_seq.shape}")
-print(f"X_test:  {X_test_seq.shape}, y_test: {y_test_seq_raw.shape}")
-
-if X_train_seq.shape[0] == 0:
-    print("\n❌ ERROR: No sequences created!")
-    print(f"   Try reducing SEQUENCE_LENGTH (current: {SEQUENCE_LENGTH})")
-    exit(1)
+print(f"\nSequences created:")
+print(f"X_train shape: {X_train_seq.shape}, y_train shape: {y_train_seq.shape}")
+print(f"X_val shape:   {X_val_seq.shape}, y_val shape: {y_val_seq.shape}")
+print(f"X_test shape:  {X_test_seq.shape}, y_test shape: {y_test_seq_raw.shape}")
 
 # --- 5. Build and Train Model ---
 input_shape = (SEQUENCE_LENGTH, NUM_FEATURES)
-print(f"\n=== Building Model ===")
-print(f"Input shape: {input_shape}")
-
 demand_model = build_lstm_model(input_shape)
 
+# Callbacks
 early_stopping = EarlyStopping(
     monitor='val_loss',
-    patience=20,  # เพิ่ม patience
+    patience=15,
     restore_best_weights=True,
     verbose=1
 )
@@ -255,32 +135,30 @@ early_stopping = EarlyStopping(
 reduce_lr = ReduceLROnPlateau(
     monitor='val_loss',
     factor=0.5,
-    patience=7,  # เพิ่ม patience
-    min_lr=1e-7,
+    patience=5,
+    min_lr=1e-6,
     verbose=1
 )
 
 print("\n=== Training Model ===")
 history = demand_model.fit(
     X_train_seq, y_train_seq,
-    epochs=200,  # เพิ่ม epochs
-    batch_size=16,  # ลด batch size (ช่วยเรียนรู้ได้ดีกว่า)
+    epochs=150,
+    batch_size=32,
     validation_data=(X_val_seq, y_val_seq),
     callbacks=[early_stopping, reduce_lr],
     verbose=1
 )
 
 demand_model.save('demand_forecasting_model_improved.h5')
-print("\n✅ Model saved!")
+print("\nModel saved!")
 
-# --- 6. Evaluation ---
-print("\n" + "=" * 70)
-print("MODEL EVALUATION")
-print("=" * 70)
+# --- 6. Model Evaluation ---
+print("\n=== Model Evaluation ===")
 
 # Predict
 predictions_log = demand_model.predict(X_test_seq).flatten()
-predictions_raw = np.expm1(predictions_log) - 0.1  # ลบ 0.1 ที่เพิ่มไปตอนแรก
+predictions_raw = np.expm1(predictions_log)
 predictions_raw = np.maximum(0, predictions_raw)
 
 # Metrics
@@ -288,83 +166,147 @@ mae = mean_absolute_error(y_test_seq_raw, predictions_raw)
 mse = mean_squared_error(y_test_seq_raw, predictions_raw)
 rmse = np.sqrt(mse)
 r2 = r2_score(y_test_seq_raw, predictions_raw)
-mape = safe_mape(y_test_seq_raw, predictions_raw, epsilon=0.5)  # ใช้ safe MAPE
+mape = np.mean(np.abs((y_test_seq_raw - predictions_raw) / (y_test_seq_raw + 1e-6))) * 100
 
-print(f"\n📊 Test Set Performance:")
-print(f"{'Metric':<20} {'Value':<15}")
-print("-" * 35)
-print(f"{'MAE':<20} {mae:.2f} units")
-print(f"{'RMSE':<20} {rmse:.2f} units")
-print(f"{'R²':<20} {r2:.4f}")
-print(f"{'MAPE (safe)':<20} {mape:.2f}%")
-print("-" * 35)
+print(f"\nTest Set Performance:")
+print(f"  MAE:  {mae:.2f} units")
+print(f"  RMSE: {rmse:.2f} units")
+print(f"  R²:   {r2:.4f}")
+print(f"  MAPE: {mape:.2f}%")
 
-# Interpretation
-if r2 < 0.3:
-    print("❌ R² < 0.3: Poor performance")
-    print("\n💡 Possible reasons:")
-    print("   1. Too many zero values in data")
-    print("   2. Weak correlation between features and target")
-    print("   3. Need more data or better features")
-elif r2 < 0.5:
-    print("⚠️  R² < 0.5: Moderate performance")
-elif r2 < 0.7:
-    print("⚠️  R² < 0.7: Good performance")
-else:
-    print("✅ R² ≥ 0.7: Excellent performance!")
+# Additional Analysis
+print(f"\nActual Demand Stats:")
+print(f"  Mean: {y_test_seq_raw.mean():.2f}")
+print(f"  Std:  {y_test_seq_raw.std():.2f}")
+print(f"  Min:  {y_test_seq_raw.min():.2f}")
+print(f"  Max:  {y_test_seq_raw.max():.2f}")
 
-print(f"\n📈 Statistics:")
-print(f"{'Statistic':<20} {'Actual':<15} {'Predicted':<15}")
-print("-" * 50)
-print(f"{'Mean':<20} {y_test_seq_raw.mean():.2f} {predictions_raw.mean():.2f}")
-print(f"{'Std':<20} {y_test_seq_raw.std():.2f} {predictions_raw.std():.2f}")
-print(f"{'Min':<20} {y_test_seq_raw.min():.2f} {predictions_raw.min():.2f}")
-print(f"{'Max':<20} {y_test_seq_raw.max():.2f} {predictions_raw.max():.2f}")
+print(f"\nPredicted Demand Stats:")
+print(f"  Mean: {predictions_raw.mean():.2f}")
+print(f"  Std:  {predictions_raw.std():.2f}")
+print(f"  Min:  {predictions_raw.min():.2f}")
+print(f"  Max:  {predictions_raw.max():.2f}")
 
-# --- 7. Visualization (แก้ path สำหรับ Windows) ---
-try:
-    output_dir = "."  # บันทึกใน current directory
+# --- 7. Visualization ---
+plt.figure(figsize=(15, 5))
+
+# Plot 1: Training History
+plt.subplot(1, 3, 1)
+plt.plot(history.history['loss'], label='Train Loss')
+plt.plot(history.history['val_loss'], label='Val Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.title('Training History')
+plt.legend()
+plt.grid(True)
+
+# Plot 2: Actual vs Predicted
+plt.subplot(1, 3, 2)
+plt.scatter(y_test_seq_raw, predictions_raw, alpha=0.5)
+plt.plot([y_test_seq_raw.min(), y_test_seq_raw.max()],
+         [y_test_seq_raw.min(), y_test_seq_raw.max()], 'r--', lw=2)
+plt.xlabel('Actual Demand')
+plt.ylabel('Predicted Demand')
+plt.title(f'Actual vs Predicted (R²={r2:.4f})')
+plt.grid(True)
+
+# Plot 3: Residuals
+plt.subplot(1, 3, 3)
+residuals = y_test_seq_raw - predictions_raw
+plt.hist(residuals, bins=50, edgecolor='black')
+plt.xlabel('Residual')
+plt.ylabel('Frequency')
+plt.title('Residual Distribution')
+plt.grid(True)
+
+plt.tight_layout()
+plt.savefig('/mnt/user-data/outputs/model_evaluation.png', dpi=150)
+print("\nVisualization saved to: model_evaluation.png")
+
+# --- 8. Price Optimization ---
+print("\n=== Price Optimization ===")
+
+# เลือก Top 3 SKUs ที่มีข้อมูลมากที่สุด
+sku_counts = df['SKU'].value_counts()
+target_skus_encoded = sku_counts.head(3).index.values
+PRODUCT_COSTS = np.array([300, 400, 600])
+NUM_PRODUCTS = len(target_skus_encoded)
+
+print(f"Optimizing prices for SKUs: {target_skus_encoded}")
+
+# สร้าง Base Sequence จากข้อมูล Test Set ล่าสุด
+base_features = X_test_scaled[-SEQUENCE_LENGTH+1:].copy()
+
+def profit_objective_function(prices):
+    """
+    ฟังก์ชันคำนวณกำไรรวม (ที่จะ Maximize)
+    """
+    model_inputs = []
     
-    plt.figure(figsize=(15, 5))
-
-    plt.subplot(1, 3, 1)
-    plt.plot(history.history['loss'], label='Train Loss', alpha=0.8)
-    plt.plot(history.history['val_loss'], label='Val Loss', alpha=0.8)
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Training History')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-
-    plt.subplot(1, 3, 2)
-    plt.scatter(y_test_seq_raw, predictions_raw, alpha=0.5, s=20)
-    plt.plot([y_test_seq_raw.min(), y_test_seq_raw.max()],
-             [y_test_seq_raw.min(), y_test_seq_raw.max()], 'r--', lw=2)
-    plt.xlabel('Actual Demand')
-    plt.ylabel('Predicted Demand')
-    plt.title(f'Actual vs Predicted (R²={r2:.4f})')
-    plt.grid(True, alpha=0.3)
-
-    plt.subplot(1, 3, 3)
-    residuals = y_test_seq_raw - predictions_raw
-    plt.hist(residuals, bins=50, edgecolor='black', alpha=0.7)
-    plt.axvline(0, color='red', linestyle='--', linewidth=2)
-    plt.xlabel('Residual')
-    plt.ylabel('Frequency')
-    plt.title('Residual Distribution')
-    plt.grid(True, alpha=0.3)
-
-    plt.tight_layout()
+    for i, price in enumerate(prices):
+        # สร้าง feature vector สำหรับวันพรุ่งนี้
+        tomorrow_features = X_test_scaled[-1].copy()
+        
+        # อัปเดตค่าที่เกี่ยวกับ SKU และ Price
+        tomorrow_features[0] = target_skus_encoded[i]  # SKU
+        tomorrow_features[3] = (price - scaler_X.mean_[3]) / scaler_X.scale_[3]  # Scaled Price
+        
+        # สร้าง Sequence (เอา base + tomorrow)
+        sequence = np.vstack([base_features, tomorrow_features])
+        model_inputs.append(sequence)
     
-    # บันทึกใน current directory
-    save_path = os.path.join(output_dir, 'model_evaluation.png')
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    print(f"\n✅ Visualization saved: {save_path}")
-    plt.close()
+    model_inputs_array = np.array(model_inputs)
     
-except Exception as e:
-    print(f"\n⚠️  Could not create visualization: {e}")
+    # Predict Demand
+    predictions_log = demand_model.predict(model_inputs_array, verbose=0).flatten()
+    predictions_raw = np.expm1(predictions_log)
+    predictions_raw = np.maximum(0, predictions_raw)
+    
+    # คำนวณกำไร
+    total_profit = np.sum((prices - PRODUCT_COSTS) * predictions_raw)
+    
+    return -total_profit  # ติดลบเพราะ PSO minimize
 
-print("\n" + "=" * 70)
-print("✅ TRAINING COMPLETED!")
-print("=" * 70)
+# Price Bounds
+price_bounds = [
+    (400, 800),
+    (500, 1000),
+    (700, 1500)
+]
+
+optimizer = ParticleSwarmOptimizer(
+    objective_function=profit_objective_function,
+    bounds=price_bounds,
+    num_particles=50,
+    max_iter=100
+)
+
+optimal_prices, max_profit = optimizer.optimize()
+
+print(f"\n{'='*50}")
+print(f"OPTIMIZATION RESULTS:")
+print(f"{'='*50}")
+print(f"Optimal Prices: {np.round(optimal_prices, 2)}")
+print(f"Maximum Profit: ฿{-max_profit:,.2f}")
+print(f"{'='*50}")
+
+# ทดสอบ Demand ที่ราคาที่หาได้
+test_demands_log = demand_model.predict(
+    np.array([
+        np.vstack([base_features, 
+                   [(target_skus_encoded[i] - scaler_X.mean_[0]) / scaler_X.scale_[0],
+                    0, 0,  # Category, Size (placeholder)
+                    (optimal_prices[i] - scaler_X.mean_[3]) / scaler_X.scale_[3]] + 
+                   [0] * (NUM_FEATURES - 4)])  # Fill remaining features
+        for i in range(NUM_PRODUCTS)
+    ]),
+    verbose=0
+).flatten()
+
+test_demands = np.expm1(test_demands_log)
+test_demands = np.maximum(0, test_demands)
+
+print(f"\nPredicted Demands at Optimal Prices:")
+for i in range(NUM_PRODUCTS):
+    print(f"  SKU {target_skus_encoded[i]}: {test_demands[i]:.2f} units @ ฿{optimal_prices[i]:.2f}")
+    print(f"    -> Profit: ฿{(optimal_prices[i] - PRODUCT_COSTS[i]) * test_demands[i]:,.2f}")
