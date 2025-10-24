@@ -53,8 +53,8 @@ df = df.sort_values(by=['SKU', 'Date'])
 
 # หาจำนวนข้อมูลทั้งหมด
 total_records = len(df)
-train_end_idx = int(total_records * 0.7)   # 70% Train
-val_end_idx = int(total_records * 0.85)    # 15% Val, 15% Test
+train_end_idx = int(total_records * 0.8)   # 80% Train
+val_end_idx = int(total_records * 0.9)    # 10% Val, 20% Test
 
 df_train = df.iloc[:train_end_idx].copy()
 df_val = df.iloc[train_end_idx:val_end_idx].copy()
@@ -143,8 +143,8 @@ reduce_lr = ReduceLROnPlateau(
 print("\n=== Training Model ===")
 history = demand_model.fit(
     X_train_seq, y_train_seq,
-    epochs=150,
-    batch_size=32,
+    epochs=50,
+    batch_size=64,
     validation_data=(X_val_seq, y_val_seq),
     callbacks=[early_stopping, reduce_lr],
     verbose=1
@@ -220,7 +220,7 @@ plt.title('Residual Distribution')
 plt.grid(True)
 
 plt.tight_layout()
-plt.savefig('/mnt/user-data/outputs/model_evaluation.png', dpi=150)
+plt.savefig('model_evaluation.png', dpi=150)
 print("\nVisualization saved to: model_evaluation.png")
 
 # --- 8. Price Optimization ---
