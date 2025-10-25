@@ -8,7 +8,7 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 import matplotlib.pyplot as plt
 
 # --- !! 1. USE WEEKLY AGGREGATOR !! ---
-from aggregate_weekly import aggregate_data_weekly
+from aggregate_weekly import aggregate_data
 from demand_model import build_lstm_model
 # (Price Optimizer ถูกปิดใช้งานชั่วคราว)
 # from price_optimizer import ParticleSwarmOptimizer
@@ -33,7 +33,7 @@ SEQUENCE_LENGTH = 4
 DATA_FILE = r'E:\model\model\Amazon Sale Report.csv' # (ตรวจสอบ Path นี้)
 print("\n=== Loading and Aggregating Weekly Data ===")
 # df = load_and_preprocess_data(DATA_FILE) # <-- OLD (Daily)
-df = aggregate_data_weekly(DATA_FILE) # <-- NEW (Weekly)
+df = aggregate_data(DATA_FILE) # <-- NEW (Weekly)
 
 # --- !! 4. NEW WEEKLY FEATURE ENGINEERING !! ---
 # (เราต้องสร้าง Feature ใหม่ที่เหมาะกับรายสัปดาห์)
