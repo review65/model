@@ -1,4 +1,4 @@
-# main.py (IMPROVED VERSION)
+# main.py (WEEKLY VERSION)
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
@@ -7,13 +7,15 @@ import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 import matplotlib.pyplot as plt
 
-from data_preparation import load_and_preprocess_data
+# --- !! 1. USE WEEKLY AGGREGATOR !! ---
+from aggregate_weekly import aggregate_data_weekly
 from demand_model import build_lstm_model
-from price_optimizer import ParticleSwarmOptimizer
+# (Price Optimizer ถูกปิดใช้งานชั่วคราว)
+# from price_optimizer import ParticleSwarmOptimizer
 
 def create_sequences(X, y, time_steps=10):
     """
-    สร้าง "หน้าต่าง" ข้อมูลแบบ Time Series
+    สร้าง "หน้าต่าง" ข้อมูลแบบ Time Series (ฟังก์ชันนี้ใช้ได้เหมือนเดิม)
     """
     Xs, ys = [], []
     for i in range(len(X) - time_steps):
@@ -22,39 +24,68 @@ def create_sequences(X, y, time_steps=10):
         ys.append(y[i + time_steps])
     return np.array(Xs), np.array(ys)
 
-SEQUENCE_LENGTH = 14  # เพิ่มเป็น 14 วัน (2 สัปดาห์)
+# --- !! 2. ADJUST SEQUENCE LENGTH !! ---
+# 14 (วัน) ไม่เหมาะกับรายสัปดาห์
+# เราจะใช้ 4 (สัปดาห์) เพื่อมองย้อนหลังประมาณ 1 เดือน
+SEQUENCE_LENGTH = 4
 
-# --- 1. Data Loading and Preparation ---
-DATA_FILE = r'E:\model\model\Amazon Sale Report.csv'
-df = load_and_preprocess_data(DATA_FILE)
+# --- !! 3. LOAD WEEKLY DATA !! ---
+DATA_FILE = r'E:\model\model\Amazon Sale Report.csv' # (ตรวจสอบ Path นี้)
+print("\n=== Loading and Aggregating Weekly Data ===")
+# df = load_and_preprocess_data(DATA_FILE) # <-- OLD (Daily)
+df = aggregate_data_weekly(DATA_FILE) # <-- NEW (Weekly)
 
-# *** UPDATED FEATURES LIST ***
+# --- !! 4. NEW WEEKLY FEATURE ENGINEERING !! ---
+# (เราต้องสร้าง Feature ใหม่ที่เหมาะกับรายสัปดาห์)
+print("\n=== Creating WEEKLY Features ===")
+df = df.sort_values(by=['SKU', 'Date'])
+
+# Time Features (Weekly)
+# (Date อยู่ใน index, ต้อง reset ก่อน)
+df = df.reset_index()
+df['week_of_year'] = df['Date'].dt.isocalendar().week.astype(float)
+df['month'] = df['Date'].dt.month.astype(float)
+df['month_sin'] = np.sin(2 * np.pi * df['month']/12)
+df['month_cos'] = np.cos(2 * np.pi * df['month']/12)
+
+# Lag Features (Weekly) - ใช้ .shift(1) เพื่อป้องกัน Data Leakage
+df['Qty_lag_1'] = df.groupby('SKU')['Total_Qty'].shift(1) # 1 สัปดาห์ก่อน
+df['Qty_lag_2'] = df.groupby('SKU')['Total_Qty'].shift(2) # 2 สัปดาห์ก่อน
+df['Qty_lag_4'] = df.groupby('SKU')['Total_Qty'].shift(4) # 4 สัปดาห์ก่อน
+
+# Rolling Mean Features (Weekly)
+df['Qty_roll_mean_4'] = df.groupby('SKU')['Total_Qty'].shift(1).rolling(window=4, min_periods=1).mean()
+df['Qty_roll_mean_8'] = df.groupby('SKU')['Total_Qty'].shift(1).rolling(window=8, min_periods=1).mean()
+
+# Price Features (Weekly)
+df['Price_lag_1'] = df.groupby('SKU')['Avg_Price'].shift(1)
+df['price_change_pct'] = (df['Avg_Price'] - df['Price_lag_1']) / (df['Price_lag_1'] + 1e-6)
+
+# (Drop rows with NaNs ที่เกิดจากการสร้าง Lag)
+print(f"Original shape: {df.shape}")
+df = df.dropna()
+print(f"Shape after dropping NaNs: {df.shape}")
+
+# --- !! 5. NEW FEATURE LIST (Weekly) !! ---
 features = [
-    'SKU', 'Category', 'Size', 'Avg_Price', 'Max_Price', 'Min_Price', 'Std_Price',
-    'day_of_week', 'month', 'week_of_year', 'day_of_month', 'quarter',
-    'day_of_week_sin', 'day_of_week_cos', 'month_sin', 'month_cos',
-    'is_weekend', 'is_month_start', 'is_month_end',
-    'Has_Promotion', 'price_x_promotion', 'price_change_pct',
-    'Qty_lag_1', 'Qty_lag_3', 'Qty_lag_7', 'Qty_lag_14',
-    'Qty_roll_mean_3', 'Qty_roll_mean_7', 'Qty_roll_mean_14', 'Qty_roll_mean_30',
-    'Qty_roll_std_3', 'Qty_roll_std_7', 'Qty_roll_std_14', 'Qty_roll_std_30',
-    'Price_lag_1', 'Price_lag_7',
-    'Promo_lag_1', 'Promo_lag_7',
-    'qty_trend_7', 'qty_trend_30'
+    'SKU', 'Category', 'Size', 'Avg_Price', 'Max_Price', 'Min_Price',
+    'week_of_year', 'month', 'month_sin', 'month_cos',
+    'Qty_lag_1', 'Qty_lag_2', 'Qty_lag_4',
+    'Qty_roll_mean_4', 'Qty_roll_mean_8',
+    'Price_lag_1', 'price_change_pct'
 ]
 
 target = 'Total_Qty'
 NUM_FEATURES = len(features)
-print(f"\nTotal features: {NUM_FEATURES}")
+print(f"\nTotal weekly features: {NUM_FEATURES}")
 
-# --- 2. Time-based Train/Val/Test Split (แก้ปัญหา Data Leakage) ---
+# --- 6. Time-based Train/Val/Test Split ---
 print("\n=== Time-based Data Split ===")
 df = df.sort_values(by=['SKU', 'Date'])
 
-# หาจำนวนข้อมูลทั้งหมด
 total_records = len(df)
-train_end_idx = int(total_records * 0.8)   # 80% Train
-val_end_idx = int(total_records * 0.9)    # 10% Val, 20% Test
+train_end_idx = int(total_records * 0.7)
+val_end_idx = int(total_records * 0.85)
 
 df_train = df.iloc[:train_end_idx].copy()
 df_val = df.iloc[train_end_idx:val_end_idx].copy()
@@ -64,7 +95,7 @@ print(f"Train period: {df_train['Date'].min()} to {df_train['Date'].max()}")
 print(f"Val period:   {df_val['Date'].min()} to {df_val['Date'].max()}")
 print(f"Test period:  {df_test['Date'].min()} to {df_test['Date'].max()}")
 
-# --- 3. Fit Scaler เฉพาะ Train Set ---
+# --- 7. Fit Scaler ---
 print("\n=== Fitting Scaler on Train Set ONLY ===")
 X_train_raw = df_train[features].values
 y_train_raw = df_train[target].values
@@ -72,33 +103,33 @@ y_train_raw = df_train[target].values
 scaler_X = StandardScaler()
 scaler_X.fit(X_train_raw)
 
-# Scale ทุก Set
 X_train_scaled = scaler_X.transform(X_train_raw)
 X_val_scaled = scaler_X.transform(df_val[features].values)
 X_test_scaled = scaler_X.transform(df_test[features].values)
 
-# Log Transform Target
-y_train_log = np.log1p(y_train_raw)
-y_val_log = np.log1p(df_val[target].values)
-y_test_raw = df_test[target].values  # เก็บ raw สำหรับ evaluation
+# (เราจะยังเทรนบน Raw Values + Tweedie Loss)
+print("\nTraining on RAW target values (No Log Transform).")
+y_train_target = y_train_raw
+y_val_target = df_val[target].values
+y_test_raw = df_test[target].values
 
-# --- 4. สร้าง Sequences Per SKU ---
+# --- 8. สร้าง Sequences Per SKU ---
 print("\n=== Creating Sequences Per SKU ===")
 
-def create_sequences_per_sku(X_scaled, y_log, df_subset, seq_length):
+def create_sequences_per_sku(X_scaled, y_target, df_subset, seq_length):
     """สร้าง sequences โดยแยกตาม SKU"""
     all_X_seq = []
     all_y_seq = []
     
+    # (ต้องมั่นใจว่า index ของ df_subset ตรงกับ X_scaled)
+    df_subset = df_subset.reset_index(drop=True)
+    
     for sku_code in df_subset['SKU'].unique():
         sku_indices = df_subset[df_subset['SKU'] == sku_code].index
         
-        # Map indices กลับไปหา position ใน X_scaled
-        sku_positions = [df_subset.index.get_loc(idx) for idx in sku_indices]
-        
-        if len(sku_positions) > seq_length:
-            X_sku = X_scaled[sku_positions]
-            y_sku = y_log[sku_positions]
+        if len(sku_indices) > seq_length:
+            X_sku = X_scaled[sku_indices]
+            y_sku = y_target[sku_indices]
             
             X_seq, y_seq = create_sequences(X_sku, y_sku, seq_length)
             
@@ -109,18 +140,28 @@ def create_sequences_per_sku(X_scaled, y_log, df_subset, seq_length):
     if len(all_X_seq) > 0:
         return np.concatenate(all_X_seq), np.concatenate(all_y_seq)
     else:
-        return np.array([]), np.array([])
+        # (ป้องกัน Error ถ้าไม่มีข้อมูล)
+        return np.empty((0, seq_length, X_scaled.shape[1])), np.empty((0,))
 
-X_train_seq, y_train_seq = create_sequences_per_sku(X_train_scaled, y_train_log, df_train, SEQUENCE_LENGTH)
-X_val_seq, y_val_seq = create_sequences_per_sku(X_val_scaled, y_val_log, df_val, SEQUENCE_LENGTH)
+X_train_seq, y_train_seq = create_sequences_per_sku(X_train_scaled, y_train_target, df_train, SEQUENCE_LENGTH)
 X_test_seq, y_test_seq_raw = create_sequences_per_sku(X_test_scaled, y_test_raw, df_test, SEQUENCE_LENGTH)
+
+# (จัดการ Validation Set แยกกัน)
+X_val_scaled_full = scaler_X.transform(df_val[features].values)
+y_val_target_full = df_val[target].values
+X_val_seq, y_val_seq = create_sequences_per_sku(X_val_scaled_full, y_val_target_full, df_val, SEQUENCE_LENGTH)
+
 
 print(f"\nSequences created:")
 print(f"X_train shape: {X_train_seq.shape}, y_train shape: {y_train_seq.shape}")
 print(f"X_val shape:   {X_val_seq.shape}, y_val shape: {y_val_seq.shape}")
 print(f"X_test shape:  {X_test_seq.shape}, y_test shape: {y_test_seq_raw.shape}")
 
-# --- 5. Build and Train Model ---
+# (ป้องกันการเทรนถ้าไม่มีข้อมูล)
+if X_train_seq.shape[0] == 0 or X_test_seq.shape[0] == 0:
+    raise ValueError("Failed to create sequences. Check data or SEQUENCE_LENGTH.")
+
+# --- 9. Build and Train Model ---
 input_shape = (SEQUENCE_LENGTH, NUM_FEATURES)
 demand_model = build_lstm_model(input_shape)
 
@@ -140,25 +181,23 @@ reduce_lr = ReduceLROnPlateau(
     verbose=1
 )
 
-print("\n=== Training Model ===")
+print("\n=== Training Model (Weekly) ===")
 history = demand_model.fit(
     X_train_seq, y_train_seq,
-    epochs=50,
-    batch_size=64,
+    epochs=150,
+    batch_size=32, # (Batch size 32 น่าจะโอเค เพราะข้อมูลน้อยลง)
     validation_data=(X_val_seq, y_val_seq),
     callbacks=[early_stopping, reduce_lr],
     verbose=1
 )
 
-demand_model.save('demand_forecasting_model_improved.h5')
+demand_model.save('demand_forecasting_model_weekly.h5')
 print("\nModel saved!")
 
-# --- 6. Model Evaluation ---
-print("\n=== Model Evaluation ===")
+# --- 10. Model Evaluation ---
+print("\n=== Model Evaluation (Weekly) ===")
 
-# Predict
-predictions_log = demand_model.predict(X_test_seq).flatten()
-predictions_raw = np.expm1(predictions_log)
+predictions_raw = demand_model.predict(X_test_seq).flatten()
 predictions_raw = np.maximum(0, predictions_raw)
 
 # Metrics
@@ -166,28 +205,34 @@ mae = mean_absolute_error(y_test_seq_raw, predictions_raw)
 mse = mean_squared_error(y_test_seq_raw, predictions_raw)
 rmse = np.sqrt(mse)
 r2 = r2_score(y_test_seq_raw, predictions_raw)
-mape = np.mean(np.abs((y_test_seq_raw - predictions_raw) / (y_test_seq_raw + 1e-6))) * 100
 
-print(f"\nTest Set Performance:")
+# (แก้ไข MAPE Logic)
+mask = y_test_seq_raw > 1e-6
+if np.sum(mask) > 0:
+    mape = np.mean(np.abs((y_test_seq_raw[mask] - predictions_raw[mask]) / y_test_seq_raw[mask])) * 100
+else:
+    mape = 0.0 # (ป้องกันหารด้วย 0)
+
+print(f"\nTest Set Performance (Weekly):")
 print(f"  MAE:  {mae:.2f} units")
 print(f"  RMSE: {rmse:.2f} units")
 print(f"  R²:   {r2:.4f}")
 print(f"  MAPE: {mape:.2f}%")
 
 # Additional Analysis
-print(f"\nActual Demand Stats:")
+print(f"\nActual Demand Stats (Weekly):")
 print(f"  Mean: {y_test_seq_raw.mean():.2f}")
 print(f"  Std:  {y_test_seq_raw.std():.2f}")
 print(f"  Min:  {y_test_seq_raw.min():.2f}")
 print(f"  Max:  {y_test_seq_raw.max():.2f}")
 
-print(f"\nPredicted Demand Stats:")
+print(f"\nPredicted Demand Stats (Weekly):")
 print(f"  Mean: {predictions_raw.mean():.2f}")
 print(f"  Std:  {predictions_raw.std():.2f}")
 print(f"  Min:  {predictions_raw.min():.2f}")
 print(f"  Max:  {predictions_raw.max():.2f}")
 
-# --- 7. Visualization ---
+# --- 11. Visualization ---
 plt.figure(figsize=(15, 5))
 
 # Plot 1: Training History
@@ -196,10 +241,11 @@ plt.plot(history.history['loss'], label='Train Loss')
 plt.plot(history.history['val_loss'], label='Val Loss')
 plt.xlabel('Epoch')
 plt.ylabel('Loss')
-plt.title('Training History')
+plt.title('Training History (Weekly)')
 plt.legend()
 plt.grid(True)
 
+# (Plot 2 และ 3 เหมือนเดิม)
 # Plot 2: Actual vs Predicted
 plt.subplot(1, 3, 2)
 plt.scatter(y_test_seq_raw, predictions_raw, alpha=0.5)
@@ -220,93 +266,12 @@ plt.title('Residual Distribution')
 plt.grid(True)
 
 plt.tight_layout()
-plt.savefig('model_evaluation.png', dpi=150)
-print("\nVisualization saved to: model_evaluation.png")
+# (แก้ Path ที่บันทึก)
+plt.savefig('model_evaluation_weekly.png', dpi=150)
+print("\nVisualization saved to: model_evaluation_weekly.png")
 
-# --- 8. Price Optimization ---
-print("\n=== Price Optimization ===")
-
-# เลือก Top 3 SKUs ที่มีข้อมูลมากที่สุด
-sku_counts = df['SKU'].value_counts()
-target_skus_encoded = sku_counts.head(3).index.values
-PRODUCT_COSTS = np.array([300, 400, 600])
-NUM_PRODUCTS = len(target_skus_encoded)
-
-print(f"Optimizing prices for SKUs: {target_skus_encoded}")
-
-# สร้าง Base Sequence จากข้อมูล Test Set ล่าสุด
-base_features = X_test_scaled[-SEQUENCE_LENGTH+1:].copy()
-
-def profit_objective_function(prices):
-    """
-    ฟังก์ชันคำนวณกำไรรวม (ที่จะ Maximize)
-    """
-    model_inputs = []
-    
-    for i, price in enumerate(prices):
-        # สร้าง feature vector สำหรับวันพรุ่งนี้
-        tomorrow_features = X_test_scaled[-1].copy()
-        
-        # อัปเดตค่าที่เกี่ยวกับ SKU และ Price
-        tomorrow_features[0] = target_skus_encoded[i]  # SKU
-        tomorrow_features[3] = (price - scaler_X.mean_[3]) / scaler_X.scale_[3]  # Scaled Price
-        
-        # สร้าง Sequence (เอา base + tomorrow)
-        sequence = np.vstack([base_features, tomorrow_features])
-        model_inputs.append(sequence)
-    
-    model_inputs_array = np.array(model_inputs)
-    
-    # Predict Demand
-    predictions_log = demand_model.predict(model_inputs_array, verbose=0).flatten()
-    predictions_raw = np.expm1(predictions_log)
-    predictions_raw = np.maximum(0, predictions_raw)
-    
-    # คำนวณกำไร
-    total_profit = np.sum((prices - PRODUCT_COSTS) * predictions_raw)
-    
-    return -total_profit  # ติดลบเพราะ PSO minimize
-
-# Price Bounds
-price_bounds = [
-    (400, 800),
-    (500, 1000),
-    (700, 1500)
-]
-
-optimizer = ParticleSwarmOptimizer(
-    objective_function=profit_objective_function,
-    bounds=price_bounds,
-    num_particles=50,
-    max_iter=100
-)
-
-optimal_prices, max_profit = optimizer.optimize()
-
-print(f"\n{'='*50}")
-print(f"OPTIMIZATION RESULTS:")
-print(f"{'='*50}")
-print(f"Optimal Prices: {np.round(optimal_prices, 2)}")
-print(f"Maximum Profit: ฿{-max_profit:,.2f}")
-print(f"{'='*50}")
-
-# ทดสอบ Demand ที่ราคาที่หาได้
-test_demands_log = demand_model.predict(
-    np.array([
-        np.vstack([base_features, 
-                   [(target_skus_encoded[i] - scaler_X.mean_[0]) / scaler_X.scale_[0],
-                    0, 0,  # Category, Size (placeholder)
-                    (optimal_prices[i] - scaler_X.mean_[3]) / scaler_X.scale_[3]] + 
-                   [0] * (NUM_FEATURES - 4)])  # Fill remaining features
-        for i in range(NUM_PRODUCTS)
-    ]),
-    verbose=0
-).flatten()
-
-test_demands = np.expm1(test_demands_log)
-test_demands = np.maximum(0, test_demands)
-
-print(f"\nPredicted Demands at Optimal Prices:")
-for i in range(NUM_PRODUCTS):
-    print(f"  SKU {target_skus_encoded[i]}: {test_demands[i]:.2f} units @ ฿{optimal_prices[i]:.2f}")
-    print(f"    -> Profit: ฿{(optimal_prices[i] - PRODUCT_COSTS[i]) * test_demands[i]:,.2f}")
+# --- 12. Price Optimization (SKIPPED) ---
+print("\n=== Price Optimization (SKIPPED) ===")
+print("Price Optimization logic is complex and must be re-written for WEEKLY features.")
+print("Skipping this section for now...")
+print("The trained model 'demand_forecasting_model_weekly.h5' is saved.")
