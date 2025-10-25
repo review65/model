@@ -264,4 +264,5 @@ for model_name, data in results.items():
 
     for i in range(NUM_PRODUCTS):
         print(f"    SKU (Enc) {target_skus_encoded[i]}: {test_demands[i]:.2f} units @ ฿{optimal_prices[i]:.2f}")
-        profit = (optimal_prices[i] - PRODUCT_COSTS[i]) * test_demands[i] print(f" -> Profit: ฿{profit:,.2f}")
+        profit = (optimal_prices[i] - PRODUCT_COSTS[i]) * test_demands[i] 
+        print(f" -> Profit: ฿{profit:,.2f}")
