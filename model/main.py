@@ -28,7 +28,7 @@ def create_sequences(X, y, time_steps=10):
 # --- !! 2. ADJUST SEQUENCE LENGTH !! ---
 # 14 (วัน) ไม่เหมาะกับรายสัปดาห์
 # เราจะใช้ 4 (สัปดาห์) เพื่อมองย้อนหลังประมาณ 1 เดือน
-SEQUENCE_LENGTH = 4
+SEQUENCE_LENGTH = 1
 
 # --- !! 3. LOAD WEEKLY DATA !! ---
 DATA_FILE = r'E:\model\model\Amazon Sale Report.csv' # (ตรวจสอบ Path นี้)
