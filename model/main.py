@@ -240,7 +240,7 @@ for model_name, data in results.items():
     print(f"OPTIMIZATION RESULTS (For {model_name}):")
     print(f"{'='*50}")
     print(f"  Optimal Prices: {np.round(optimal_prices, 2)}")
-    print(f"  Maximum Profit: ฿{-max_profit:,.2f}")
+    print(f"  Maximum Profit: ฿{max_profit:,.2f}")
     print(f"{'='*50}")
 
     # (แสดงผลลัพธ์ย่อยของโมเดลนี้)
@@ -264,4 +264,4 @@ for model_name, data in results.items():
 
     for i in range(NUM_PRODUCTS):
         print(f"    SKU (Enc) {target_skus_encoded[i]}: {test_demands[i]:.2f} units @ ฿{optimal_prices[i]:.2f}")
-        print(f"      -> Profit: ฿{(optimal_prices[i] - PRODUCT_COSTS[i]) * test_demands[i]:,.2f}")
+        profit = (optimal_prices[i] - PRODUCT_COSTS[i]) * test_demands[i] print(f" -> Profit: ฿{profit:,.2f}")
