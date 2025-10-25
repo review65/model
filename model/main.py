@@ -6,6 +6,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import LabelEncoder
 
 # --- !! 1. USE WEEKLY AGGREGATOR !! ---
 from aggregate_weekly import aggregate_data
@@ -35,6 +36,20 @@ print("\n=== Loading and Aggregating Weekly Data ===")
 # df = load_and_preprocess_data(DATA_FILE) # <-- OLD (Daily)
 df = aggregate_data(DATA_FILE) # <-- NEW (Weekly)
 
+# --- !! 4. ENCODE CATEGORICAL FEATURES !! ---
+# (StandardScaler requires all inputs to be numeric)
+print("\nEncoding categorical features (SKU, Category, Size)...")
+
+# เราจะใช้ LabelEncoder เพื่อแปลง String เป็นตัวเลข
+encoders = {}
+for col in ['SKU', 'Category', 'Size']:
+    le = LabelEncoder()
+    df[col] = le.fit_transform(df[col])
+    encoders[col] = le # (เก็บไว้เผื่อใช้ในอนาคต)
+
+# (เปลี่ยนเลขที่หัวข้อถัดไป)
+# --- !! 5. NEW WEEKLY FEATURE ENGINEERING !! ---
+
 # --- !! 4. NEW WEEKLY FEATURE ENGINEERING !! ---
 # (เราต้องสร้าง Feature ใหม่ที่เหมาะกับรายสัปดาห์)
 print("\n=== Creating WEEKLY Features ===")
@@ -48,14 +63,16 @@ df['month'] = df['Date'].dt.month.astype(float)
 df['month_sin'] = np.sin(2 * np.pi * df['month']/12)
 df['month_cos'] = np.cos(2 * np.pi * df['month']/12)
 
-# Lag Features (Weekly) - ใช้ .shift(1) เพื่อป้องกัน Data Leakage
+# Lag Features (Weekly)
 df['Qty_lag_1'] = df.groupby('SKU')['Total_Qty'].shift(1) # 1 สัปดาห์ก่อน
-df['Qty_lag_2'] = df.groupby('SKU')['Total_Qty'].shift(2) # 2 สัปดาห์ก่อน
-df['Qty_lag_4'] = df.groupby('SKU')['Total_Qty'].shift(4) # 4 สัปดาห์ก่อน
+# (ลบ Qty_lag_2, Qty_lag_4)
 
 # Rolling Mean Features (Weekly)
-df['Qty_roll_mean_4'] = df.groupby('SKU')['Total_Qty'].shift(1).rolling(window=4, min_periods=1).mean()
-df['Qty_roll_mean_8'] = df.groupby('SKU')['Total_Qty'].shift(1).rolling(window=8, min_periods=1).mean()
+# (ลบ Qty_roll_mean_4, Qty_roll_mean_8)
+
+# Price Features (Weekly)
+df['Price_lag_1'] = df.groupby('SKU')['Avg_Price'].shift(1)
+df['price_change_pct'] = (df['Avg_Price'] - df['Price_lag_1']) / (df['Price_lag_1'] + 1e-6)
 
 # Price Features (Weekly)
 df['Price_lag_1'] = df.groupby('SKU')['Avg_Price'].shift(1)
@@ -70,8 +87,7 @@ print(f"Shape after dropping NaNs: {df.shape}")
 features = [
     'SKU', 'Category', 'Size', 'Avg_Price', 'Max_Price', 'Min_Price',
     'week_of_year', 'month', 'month_sin', 'month_cos',
-    'Qty_lag_1', 'Qty_lag_2', 'Qty_lag_4',
-    'Qty_roll_mean_4', 'Qty_roll_mean_8',
+    'Qty_lag_1', # <--- เหลือแค่นี้
     'Price_lag_1', 'price_change_pct'
 ]
 
@@ -81,7 +97,8 @@ print(f"\nTotal weekly features: {NUM_FEATURES}")
 
 # --- 6. Time-based Train/Val/Test Split ---
 print("\n=== Time-based Data Split ===")
-df = df.sort_values(by=['SKU', 'Date'])
+print("Sorting by Date first for proper time-based split...")
+df = df.sort_values(by=['Date'])
 
 total_records = len(df)
 train_end_idx = int(total_records * 0.7)
