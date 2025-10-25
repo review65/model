@@ -50,7 +50,7 @@ features = [
     'week_of_year', 'month', 'month_sin', 'month_cos',
     'Qty_lag_1',
     'Price_lag_1', 'price_change_pct',
-    'Has_Promotion', 'Transaction_Count'
+    'Has_Promotion' 
 ]
 target = 'Total_Qty'
 NUM_FEATURES = len(features)
