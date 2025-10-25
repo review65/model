@@ -14,10 +14,8 @@ from sklearn.neural_network import MLPRegressor
 from aggregate_weekly import aggregate_data
 from price_optimizer import ParticleSwarmOptimizer # <-- เปิดใช้งาน
 
-# (ส่วน 3, 4, 5, 6, 7 เหมือนเดิมเป๊ะ... ผมย่อไว้)
-
 # --- 3. LOAD WEEKLY DATA ---
-DATA_FILE = r'E:\model\model\Amazon Sale Report.csv'
+DATA_FILE = r'E:\model\model\Amazon Sale Report.csv' # (ตรวจสอบ Path นี้)
 print("\n=== Loading and Aggregating Weekly Data ===")
 df = aggregate_data(DATA_FILE)
 
@@ -160,91 +158,110 @@ plt.savefig(f'model_evaluation_weekly_COMPARISON.png', dpi=150)
 print(f"\nVisualization for best model ({best_model_name}) saved to: model_evaluation_weekly_COMPARISON.png")
 
 
-# --- !! 11. PRICE OPTIMIZATION SETUP !! ---
-# (เราจะตั้งค่าตัวแปรที่ใช้ร่วมกันก่อน)
-
+# --- !! 11. PRICE OPTIMIZATION SETUP (FIXED) !! ---
 print("\n" + "="*50)
 print("=== Price Optimization (ACTIVATED) ===")
 print("="*50)
 
 # 1. ค้นหา SKUs ที่เราต้องการ
-# (เราต้องแปลง SKU "ดิบ" ไปเป็น SKU "ที่เข้ารหัส")
-target_skus_raw = ['1298', '2963', '4488']
-try:
-    target_skus_encoded = encoders['SKU'].transform(target_skus_raw)
-    print(f"Optimizing for Raw SKUs: {target_skus_raw} (Encoded: {target_skus_encoded})")
-except ValueError as e:
-    print(f"Error: One of the target SKUs {target_skus_raw} was not found in the training data.")
-    print("Skipping Price Optimization.")
-    target_skus_encoded = None
+# (เลือก Top 3 SKUs ที่มีข้อมูลเยอะที่สุดจาก Train Set)
+# (ข้อมูลนี้ถูกเข้ารหัส (Encoded) แล้วโดย LabelEncoder)
+top_skus_in_train = df_train['SKU'].value_counts().head(3).index.values
 
-if target_skus_encoded is not None:
-    PRODUCT_COSTS = np.array([300, 400, 600]) # (ปรับต้นทุนตามจริง)
-    NUM_PRODUCTS = len(target_skus_encoded)
+target_skus_encoded = top_skus_in_train
 
-    # 2. ดึง "ข้อมูลฐาน" (สัปดาห์ล่าสุด)
-    base_features_unscaled = df_test[features].iloc[-1].values
-    f_map = {name: idx for idx, name in enumerate(features)} # (Map ชื่อ feature ไปยัง index)
+print(f"Optimizing for Top 3 Encoded SKUs from Train Set: {target_skus_encoded}")
 
-    # 3. Price Bounds
-    price_bounds = [
-        (400, 800),
-        (500, 1000),
-        (700, 1500)
-    ]
+PRODUCT_COSTS = np.array([300, 400, 600]) # (ปรับต้นทุนตามจริง)
+NUM_PRODUCTS = len(target_skus_encoded)
 
-    # 4. สร้าง Objective Function (ที่รับ model เป็น argument)
-    def profit_objective_function(prices, model_to_use):
-        """
-        ฟังก์ชันคำนวณกำไร (สำหรับโมเดล Flat/Weekly)
-        """
-        model_inputs = []
-        
-        for i, new_price in enumerate(prices):
-            future_features_unscaled = base_features_unscaled.copy()
-            today_price = future_features_unscaled[f_map['Avg_Price']]
-            
-            future_features_unscaled[f_map['SKU']] = target_skus_encoded[i]
-            future_features_unscaled[f_map['Avg_Price']] = new_price
-            future_features_unscaled[f_map['Max_Price']] = new_price
-            future_features_unscaled[f_map['Min_Price']] = new_price
-            future_features_unscaled[f_map['Price_lag_1']] = today_price
-            future_features_unscaled[f_map['price_change_pct']] = (new_price - today_price) / (today_price + 1e-6)
-            future_features_unscaled[f_map['Has_Promotion']] = 0 
-            
-            model_inputs.append(future_features_unscaled)
+# 2. ดึง "ข้อมูลฐาน" (สัปดาห์ล่าสุด)
+# (ใช้ข้อมูล "ดิบ" (unscaled) จากแถวสุดท้ายของ Test Set เป็นฐาน)
+base_features_unscaled = df_test[features].iloc[-1].values
+f_map = {name: idx for idx, name in enumerate(features)} # (Map ชื่อ feature ไปยัง index)
 
-        model_inputs_scaled = scaler_X.transform(np.array(model_inputs))
-        
-        predictions_raw = model_to_use.predict(model_inputs_scaled)
-        predictions_raw = np.maximum(0, predictions_raw)
-        
-        total_profit = np.sum((prices - PRODUCT_COSTS) * predictions_raw)
-        return -total_profit  # ติดลบเพราะ PSO minimize
+# 3. Price Bounds
+price_bounds = [
+    (400, 800),
+    (500, 1000),
+    (700, 1500)
+]
 
-    # --- !! 12. RUN OPTIMIZER FOR ALL 3 MODELS !! ---
+# 4. สร้าง Objective Function (ที่รับ model เป็น argument)
+def profit_objective_function(prices, model_to_use):
+    """
+    ฟังก์ชันคำนวณกำไร (สำหรับโมเดล Flat/Weekly)
+    """
+    model_inputs = []
     
-    for model_name, data in results.items():
+    for i, new_price in enumerate(prices):
+        future_features_unscaled = base_features_unscaled.copy()
+        today_price = future_features_unscaled[f_map['Avg_Price']]
         
-        print(f"\n--- Optimizing Prices using: {model_name} (R²: {data['R²']:.4f}) ---")
+        future_features_unscaled[f_map['SKU']] = target_skus_encoded[i]
+        future_features_unscaled[f_map['Avg_Price']] = new_price
+        future_features_unscaled[f_map['Max_Price']] = new_price
+        future_features_unscaled[f_map['Min_Price']] = new_price
+        future_features_unscaled[f_map['Price_lag_1']] = today_price
+        future_features_unscaled[f_map['price_change_pct']] = (new_price - today_price) / (today_price + 1e-6)
+        future_features_unscaled[f_map['Has_Promotion']] = 0 
         
-        current_model = data['model_obj']
-        
-        # (สร้าง lambda function เพื่อส่ง model ที่ถูกต้องเข้าไป)
-        objective_wrapper = functools.partial(profit_objective_function, model_to_use=current_model)
-        
-        optimizer = ParticleSwarmOptimizer(
-            objective_function=objective_wrapper,
-            bounds=price_bounds,
-            num_particles=50,
-            max_iter=100
-        )
+        model_inputs.append(future_features_unscaled)
 
-        optimal_prices, max_profit = optimizer.optimize()
+    model_inputs_scaled = scaler_X.transform(np.array(model_inputs))
+    
+    predictions_raw = model_to_use.predict(model_inputs_scaled)
+    predictions_raw = np.maximum(0, predictions_raw)
+    
+    total_profit = np.sum((prices - PRODUCT_COSTS) * predictions_raw)
+    return -total_profit  # ติดลบเพราะ PSO minimize
 
-        print(f"\n{'='*50}")
-        print(f"OPTIMIZATION RESULTS (For {model_name}):")
-        print(f"{'='*50}")
-        print(f"  Optimal Prices: {np.round(optimal_prices, 2)}")
-        print(f"  Maximum Profit: ฿{-max_profit:,.2f}")
-        print(f"{'='*50}")
+# --- !! 12. RUN OPTIMIZER FOR ALL 3 MODELS !! ---
+
+for model_name, data in results.items():
+    
+    print(f"\n--- Optimizing Prices using: {model_name} (R²: {data['R²']:.4f}) ---")
+    
+    current_model = data['model_obj']
+    
+    # (สร้าง lambda function เพื่อส่ง model ที่ถูกต้องเข้าไป)
+    objective_wrapper = functools.partial(profit_objective_function, model_to_use=current_model)
+    
+    optimizer = ParticleSwarmOptimizer(
+        objective_function=objective_wrapper,
+        bounds=price_bounds,
+        num_particles=50,
+        max_iter=100
+    )
+
+    optimal_prices, max_profit = optimizer.optimize()
+
+    print(f"\n{'='*50}")
+    print(f"OPTIMIZATION RESULTS (For {model_name}):")
+    print(f"{'='*50}")
+    print(f"  Optimal Prices: {np.round(optimal_prices, 2)}")
+    print(f"  Maximum Profit: ฿{-max_profit:,.2f}")
+    print(f"{'='*50}")
+
+    # (แสดงผลลัพธ์ย่อยของโมเดลนี้)
+    print(f"  Predicted Demands at these prices:")
+    final_inputs_unscaled = []
+    for i, price in enumerate(optimal_prices):
+        future_features_unscaled = base_features_unscaled.copy()
+        today_price = future_features_unscaled[f_map['Avg_Price']]
+        future_features_unscaled[f_map['SKU']] = target_skus_encoded[i]
+        future_features_unscaled[f_map['Avg_Price']] = price
+        future_features_unscaled[f_map['Max_Price']] = price
+        future_features_unscaled[f_map['Min_Price']] = price
+        future_features_unscaled[f_map['Price_lag_1']] = today_price
+        future_features_unscaled[f_map['price_change_pct']] = (price - today_price) / (today_price + 1e-6)
+        future_features_unscaled[f_map['Has_Promotion']] = 0
+        final_inputs_unscaled.append(future_features_unscaled)
+
+    final_inputs_scaled = scaler_X.transform(np.array(final_inputs_unscaled))
+    test_demands = current_model.predict(final_inputs_scaled)
+    test_demands = np.maximum(0, test_demands)
+
+    for i in range(NUM_PRODUCTS):
+        print(f"    SKU (Enc) {target_skus_encoded[i]}: {test_demands[i]:.2f} units @ ฿{optimal_prices[i]:.2f}")
+        print(f"      -> Profit: ฿{(optimal_prices[i] - PRODUCT_COSTS[i]) * test_demands[i]:,.2f}")
