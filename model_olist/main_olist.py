@@ -114,15 +114,18 @@ encoders = {}
 le_cat = LabelEncoder()
 df['category_encoded'] = le_cat.fit_transform(df['product_category_name_english'])
 encoders['category'] = le_cat
-# (product_id เป็น ID อยู่แล้ว ไม่ต้อง Encode แต่เก็บไว้)
 encoders['product_id'] = 'Numeric'
-
 
 # Time Features
 print("Creating time features...")
 df['Year'] = df['Date'].dt.year
 df['Month'] = df['Date'].dt.month
 df['Week'] = df['Date'].dt.isocalendar().week.astype(float)
+# --- !! เพิ่มเติม !! ---
+df['DayOfWeek'] = df['Date'].dt.dayofweek # 0=Monday, 6=Sunday
+df['IsWeekend'] = df['DayOfWeek'].isin([5, 6]).astype(int)
+df['Quarter'] = df['Date'].dt.quarter
+# --------------------
 df['Month_Sin'] = np.sin(2 * np.pi * df['Month']/12)
 df['Month_Cos'] = np.cos(2 * np.pi * df['Month']/12)
 df['Week_Sin'] = np.sin(2 * np.pi * df['Week']/52)
@@ -133,29 +136,54 @@ print("Creating lag features...")
 df['Qty_Lag_1'] = df.groupby('product_id')['QuantitySold'].shift(1)
 df['Price_Lag_1'] = df.groupby('product_id')['AverageSellingPrice'].shift(1)
 df['Price_Diff_Lag_1'] = df['AverageSellingPrice'] - df['Price_Lag_1']
+# --- !! เพิ่มเติม !! ---
+df['Qty_Lag_2'] = df.groupby('product_id')['QuantitySold'].shift(2) # Lag 2 สัปดาห์
+df['Qty_Lag_52'] = df.groupby('product_id')['QuantitySold'].shift(52) # Lag 1 ปี
+# --------------------
 
 # Rolling Mean Features
 print("Creating rolling mean features...")
 df['Qty_Roll_Mean_4'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4, min_periods=1).mean()
 df['Price_Roll_Mean_4'] = df.groupby('product_id')['AverageSellingPrice'].shift(1).rolling(window=4, min_periods=1).mean()
+# --- !! เพิ่มเติม !! ---
+df['Qty_Roll_Std_4'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4, min_periods=1).std() # Std 4 สัปดาห์
+df['Qty_Roll_Mean_12'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=12, min_periods=1).mean() # Mean 12 สัปดาห์
+# --------------------
 
+# --- !! เพิ่ม Feature โปรโมชั่นโดยประมาณ !! ---
+print("Creating inferred promotion features...")
+# คำนวณ % ส่วนลด เทียบกับราคาเฉลี่ย 4 สัปดาห์ก่อนหน้า
+df['Discount_Pct_Approx'] = (df['Price_Roll_Mean_4'] - df['AverageSellingPrice']) / (df['Price_Roll_Mean_4'] + 1e-6)
+df['Is_Discounted_Approx'] = (df['Discount_Pct_Approx'] > 0.05).astype(int) # สมมติว่าลด > 5% คือโปรโมชั่น
+# ----------------------------------------
 
-# Drop rows with NaNs created by Lag/Rolling features
+# Drop rows with NaNs created by Lag/Rolling features (ต้อง Drop เพิ่มเพราะมี Lag_52)
 print(f"Shape before dropping NaNs: {df.shape}")
-df = df.dropna(subset=['Qty_Lag_1', 'Price_Lag_1', 'Qty_Roll_Mean_4', 'Price_Roll_Mean_4'])
+# (ต้องเพิ่ม Lag_2, Lag_52, Roll_Std_4, Roll_Mean_12, Discount_Pct_Approx เข้าไป)
+df = df.dropna(subset=['Qty_Lag_1', 'Price_Lag_1', 'Qty_Roll_Mean_4', 'Price_Roll_Mean_4',
+                       'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12',
+                       'Discount_Pct_Approx'])
 print(f"Shape after dropping NaNs: {df.shape}")
 
-# --- 7. OLIST FEATURE LIST ---
+# --- 7. OLIST FEATURE LIST (อัปเดต) ---
 features = [
-    'category_encoded','Year', 'Month', 'Week', 'Month_Sin', 'Month_Cos', 'Week_Sin', 'Week_Cos',
-    'AverageSellingPrice','Price_Lag_1','Price_Diff_Lag_1','Price_Roll_Mean_4',
-    'Qty_Lag_1',
-    'Qty_Roll_Mean_4',
+    'category_encoded',
+    # Time Features
+    'Year', 'Month', 'Week', 'Month_Sin', 'Month_Cos', 'Week_Sin', 'Week_Cos',
+    'DayOfWeek', 'IsWeekend', 'Quarter', # <-- เพิ่ม
+    # Price Features
+    'AverageSellingPrice', 'Price_Lag_1', 'Price_Diff_Lag_1', 'Price_Roll_Mean_4',
+    # Lag/Rolling Demand Features
+    'Qty_Lag_1', 'Qty_Roll_Mean_4',
+    'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12', # <-- เพิ่ม
+    # Promotion Features (Inferred)
+    'Discount_Pct_Approx', 'Is_Discounted_Approx' #<-- เพิ่ม
+    # (อาจเพิ่ม Feature โปรโมชั่นที่คำนวณมา หรือ Feature จาก product.csv)
 ]
+# (คำนวณ NUM_FEATURES ใหม่)
 target = 'QuantitySold'
 NUM_FEATURES = len(features)
 print(f"\nTotal Olist weekly features: {NUM_FEATURES}")
-
 # --- 8. Time-based Train/Validation Split ---
 print("\n=== Time-based Train/Validation Split ===")
 df = df.sort_values(by=['Date'])
@@ -195,8 +223,8 @@ print("\n=== Training and Comparing Models (Olist) ===")
 models = {
     "Linear Regression": LinearRegression(),
     "Random Forest": RandomForestRegressor(
-        n_estimators=100,
-        min_samples_leaf=10, # อาจต้องปรับค่านี้
+        n_estimators=200,
+        min_samples_leaf=5, 
         random_state=42,
         n_jobs=-1,
         verbose=1
@@ -387,10 +415,16 @@ if PSO_ENABLED:
         # TODO: A more accurate approach would involve simulating the rolling mean update.
 
         # อัปเดต Lag/Roll ของ Qty (ใช้ค่าจาก Base data เพราะเรายังไม่รู้ Qty ของสัปดาห์หน้า)
-        future_features_unscaled[f_map['Qty_Lag_1']] = base_features_unscaled_dict[prod_id_to_optimize][f_map['QuantitySold']] # Assuming base data includes QuantitySold
-        future_features_unscaled[f_map['Qty_Roll_Mean_4']] = base_features_unscaled_dict[prod_id_to_optimize][f_map['Qty_Roll_Mean_4']]
+        # --- !! แก้ไข !! --- ดึง 'QuantitySold' จาก base_data ไม่ใช่ f_map
+        if prod_id_to_optimize in base_data.index:
+            last_quantity_sold = base_data.loc[prod_id_to_optimize]['QuantitySold']
+        else:
+            # (กรณีหา base_data ไม่เจอ, ใช้ค่าสมมติ หรือ 0)
+            print(f"Warning: Cannot find base QuantitySold for {prod_id_to_optimize}, using 0 for Qty_Lag_1.")
+            last_quantity_sold = 0
 
-        # 3. Scale ข้อมูล
+        future_features_unscaled[f_map['Qty_Lag_1']] = last_quantity_sold
+        future_features_unscaled[f_map['Qty_Roll_Mean_4']] = base_features_unscaled_dict[prod_id_to_optimize][f_map['Qty_Roll_Mean_4']]
         model_input_scaled = scaler_X.transform(future_features_unscaled.reshape(1, -1))
 
         # 4. Predict Demand
