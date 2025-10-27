@@ -59,7 +59,7 @@ df_agg = df[[
     'product_id',
     'product_category_name_english',
     'price', # ราคาขายต่อหน่วย
-    'quantity' # สร้างคอลัมน์ quantity
+    'quantity', # สร้างคอลัมน์ quantity
     'product_weight_g',
     'product_length_cm',
     'product_height_cm',
@@ -107,7 +107,12 @@ weekly_data_filled.drop(columns=['product_category_name_english_y'], inplace=Tru
 weekly_data_filled['QuantitySold'] = weekly_data_filled['QuantitySold'].fillna(0)
 weekly_data_filled['AverageSellingPrice'] = weekly_data_filled.groupby('product_id')['AverageSellingPrice'].ffill().bfill() # Forward/Backward fill price
 weekly_data_filled['AverageSellingPrice'] = weekly_data_filled['AverageSellingPrice'].fillna(weekly_data_filled['AverageSellingPrice'].mean()) # Fill remaining NaNs with global mean
-
+prod_features_to_fill = ['Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean']
+for col in prod_features_to_fill:
+    # 1. เติมค่าจากสัปดาห์ก่อนหน้า/ถัดไป ของ Product เดียวกัน
+    weekly_data_filled[col] = weekly_data_filled.groupby('product_id')[col].ffill().bfill()
+    # 2. หาก Product ไหนไม่มีข้อมูลนี้เลย (NaN ล้วน) ให้เติม 0
+    weekly_data_filled[col] = weekly_data_filled[col].fillna(0)
 df = weekly_data_filled.copy()
 print(f"Weekly aggregated records (filled): {len(df)}")
 print(f"Date range: {df['Date'].min()} to {df['Date'].max()}")
@@ -185,7 +190,7 @@ features = [
     'Qty_Lag_1', 'Qty_Roll_Mean_4',
     'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12', 
     # Promotion Features (Inferred)
-    'Discount_Pct_Approx', 'Is_Discounted_Approx' 
+    'Discount_Pct_Approx', 'Is_Discounted_Approx' ,
     'Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean'
 ]
 # (คำนวณ NUM_FEATURES ใหม่)
