@@ -455,10 +455,17 @@ if PSO_ENABLED:
 
         future_features_unscaled[f_map['Qty_Lag_1']] = last_quantity_sold
         future_features_unscaled[f_map['Qty_Roll_Mean_4']] = base_features_unscaled_dict[prod_id_to_optimize][f_map['Qty_Roll_Mean_4']]
-        model_input_scaled = scaler_X.transform(future_features_unscaled.reshape(1, -1))
+        model_input_scaled_array = scaler_X.transform(future_features_unscaled.reshape(1, -1))
+        
 
         # 4. Predict Demand
-        predicted_qty = model_to_use.predict(model_input_scaled)[0]
+        if isinstance(model_to_use, LGBMRegressor):
+            # ถ้าเป็น LGBM, ส่ง DataFrame (ที่มีชื่อ)
+            model_input_scaled_df = pd.DataFrame(model_input_scaled_array, columns=features)
+            predicted_qty = model_to_use.predict(model_input_scaled_df)[0]
+        else:
+            # ถ้าเป็นโมเดลอื่น (RF, LR, MLP), ส่ง NumPy Array (ที่ไม่มีชื่อ)
+            predicted_qty = model_to_use.predict(model_input_scaled_array)[0]
         predicted_qty = max(0, round(predicted_qty)) # ทำให้ไม่ติดลบและเป็นจำนวนเต็ม
 
         # 5. คำนวณกำไร
