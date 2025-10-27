@@ -2,11 +2,12 @@
 import numpy as np
 
 class ParticleSwarmOptimizer:
-    def __init__(self, objective_function, bounds, num_particles, max_iter):
+    def __init__(self, objective_function, bounds, num_particles, max_iter, verbose=True):
         self.objective_function = objective_function
         self.bounds = np.array(bounds)
         self.num_particles = num_particles
         self.max_iter = max_iter
+        self.verbose = verbose
         self.num_dimensions = len(self.bounds)
         
         # Initialize swarm
@@ -48,7 +49,8 @@ class ParticleSwarmOptimizer:
                 self.particles_pos[j] = np.minimum(self.particles_pos[j], self.bounds[:, 1])
 
             if (i + 1) % 10 == 0:
-                print(f"Iteration {i+1}/{self.max_iter}, Best Profit Found: {-self.gbest_val:.2f}")
+                if self.verbose:
+                    print(f"Iteration {i+1}/{self.max_iter}, Best Profit Found: {-self.best_global_value:.2f}")
 
         print("\nOptimization finished.")
         return self.gbest_pos, -self.gbest_val

@@ -6,6 +6,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
 import functools
 import warnings
+from lightgbm import LGBMRegressor
 
 # --- 1. IMPORT MODELS FOR COMPARISON ---
 from sklearn.linear_model import LinearRegression
@@ -59,6 +60,10 @@ df_agg = df[[
     'product_category_name_english',
     'price', # ราคาขายต่อหน่วย
     'quantity' # สร้างคอลัมน์ quantity
+    'product_weight_g',
+    'product_length_cm',
+    'product_height_cm',
+    'product_width_cm'
 ]].copy()
 
 # Drop rows with missing category (optional, but simplifies)
@@ -75,7 +80,10 @@ df_agg = df_agg.set_index('Date')
 weekly_data = df_agg.groupby(['product_id', 'product_category_name_english', pd.Grouper(freq='W-MON')]).agg(
     QuantitySold=('quantity', 'count'), # ใช้ count เพราะเราสมมติว่า 1 แถว = 1 ชิ้น
     AverageSellingPrice=('price', 'mean'),
-    # (อาจเพิ่ม features อื่นๆ จาก df_products ที่นี่ ถ้าต้องการ)
+    Weight_g_Mean=('product_weight_g', 'mean'),
+    Length_cm_Mean=('product_length_cm', 'mean'),
+    Height_cm_Mean=('product_height_cm', 'mean'),
+    Width_cm_Mean=('product_width_cm', 'mean')
 ).reset_index()
 
 # เติม 0 สำหรับสัปดาห์ที่ไม่มีการขาย (สำคัญ!)
@@ -165,20 +173,20 @@ df = df.dropna(subset=['Qty_Lag_1', 'Price_Lag_1', 'Qty_Roll_Mean_4', 'Price_Rol
                        'Discount_Pct_Approx'])
 print(f"Shape after dropping NaNs: {df.shape}")
 
-# --- 7. OLIST FEATURE LIST (อัปเดต) ---
+# --- 7. OLIST FEATURE LIST ---
 features = [
     'category_encoded',
     # Time Features
     'Year', 'Month', 'Week', 'Month_Sin', 'Month_Cos', 'Week_Sin', 'Week_Cos',
-    'DayOfWeek', 'IsWeekend', 'Quarter', # <-- เพิ่ม
+    'DayOfWeek', 'IsWeekend', 'Quarter', 
     # Price Features
     'AverageSellingPrice', 'Price_Lag_1', 'Price_Diff_Lag_1', 'Price_Roll_Mean_4',
     # Lag/Rolling Demand Features
     'Qty_Lag_1', 'Qty_Roll_Mean_4',
-    'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12', # <-- เพิ่ม
+    'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12', 
     # Promotion Features (Inferred)
-    'Discount_Pct_Approx', 'Is_Discounted_Approx' #<-- เพิ่ม
-    # (อาจเพิ่ม Feature โปรโมชั่นที่คำนวณมา หรือ Feature จาก product.csv)
+    'Discount_Pct_Approx', 'Is_Discounted_Approx' 
+    'Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean'
 ]
 # (คำนวณ NUM_FEATURES ใหม่)
 target = 'QuantitySold'
@@ -237,6 +245,14 @@ models = {
         early_stopping=True,
         n_iter_no_change=10,
         verbose=True
+    ),
+
+    "LightGBM": LGBMRegressor(
+        n_estimators=300,
+        learning_rate=0.05,
+        num_leaves=31,
+        n_jobs=-1,
+        random_state=42
     )
 }
 
