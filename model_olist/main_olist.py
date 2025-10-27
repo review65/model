@@ -227,7 +227,7 @@ models = {
         min_samples_leaf=5, 
         random_state=42,
         n_jobs=-1,
-        verbose=1
+        verbose=0
     ),
     "Neural Network (MLP)": MLPRegressor(
         hidden_layer_sizes=(64, 32),
@@ -415,13 +415,22 @@ if PSO_ENABLED:
         # TODO: A more accurate approach would involve simulating the rolling mean update.
 
         # อัปเดต Lag/Roll ของ Qty (ใช้ค่าจาก Base data เพราะเรายังไม่รู้ Qty ของสัปดาห์หน้า)
-        # --- !! แก้ไข !! --- ดึง 'QuantitySold' จาก base_data ไม่ใช่ f_map
+        # --- !! แก้ไข (FIXED) !! --- ดึง 'QuantitySold' จาก base_data ไม่ใช่ f_map
+        last_quantity_sold = 0 # ตั้งค่าเริ่มต้นเป็น 0
+
         if prod_id_to_optimize in base_data.index:
+            # กรณีที่ 1: Fallback (groupby().last()) ทำงาน -> index คือ product_id
             last_quantity_sold = base_data.loc[prod_id_to_optimize]['QuantitySold']
+        
+        elif 'product_id' in base_data.columns and prod_id_to_optimize in base_data['product_id'].values:
+            # กรณีที่ 2: หาสัปดาห์สุดท้ายเจอ (filter by date) -> index คือตัวเลขปกติ
+            # เราต้องค้นหาจากคอลัมน์ 'product_id' แทน
+            last_quantity_sold = base_data[base_data['product_id'] == prod_id_to_optimize]['QuantitySold'].iloc[0]
+        
         else:
-            # (กรณีหา base_data ไม่เจอ, ใช้ค่าสมมติ หรือ 0)
+            # กรณีที่ 3: หาไม่เจอจริงๆ (ซึ่งไม่ควรเกิดถ้าเป็น Top 3)
             print(f"Warning: Cannot find base QuantitySold for {prod_id_to_optimize}, using 0 for Qty_Lag_1.")
-            last_quantity_sold = 0
+            # last_quantity_sold จะยังคงเป็น 0
 
         future_features_unscaled[f_map['Qty_Lag_1']] = last_quantity_sold
         future_features_unscaled[f_map['Qty_Roll_Mean_4']] = base_features_unscaled_dict[prod_id_to_optimize][f_map['Qty_Roll_Mean_4']]
@@ -458,13 +467,14 @@ if PSO_ENABLED:
                 optimizer = ParticleSwarmOptimizer(
                     objective_function=objective_wrapper,
                     bounds=[price_bounds[i]], # ส่ง bounds แค่ตัวเดียว
-                    num_particles=30, # ลดจำนวนลงได้
-                    max_iter=50      # ลดจำนวนลงได้
+                    num_particles= 30, 
+                    max_iter=50 ,     
+                    verbose=False
                 )
 
                 optimal_price_array, max_profit_single = optimizer.optimize()
                 optimal_price = optimal_price_array[0] # ผลลัพธ์เป็น array
-                max_profit = -max_profit_single # แปลงกลับเป็นบวก
+                max_profit = max_profit_single # แปลงกลับเป็นบวก
 
                 all_optimal_prices.append(optimal_price)
                 total_max_profit += max_profit
