@@ -147,20 +147,10 @@ print(f"Shape after dropping NaNs: {df.shape}")
 
 # --- 7. OLIST FEATURE LIST ---
 features = [
-    # Identifiers (สำคัญ!)
-    'product_id',
-    'category_encoded',
-    # Time Features
-    'Year', 'Month', 'Week', 'Month_Sin', 'Month_Cos', 'Week_Sin', 'Week_Cos',
-    # Price Features (หัวใจสำคัญ!)
-    'AverageSellingPrice',
-    'Price_Lag_1',
-    'Price_Diff_Lag_1',
-    'Price_Roll_Mean_4',
-    # Lag/Rolling Demand Features
+    'category_encoded','Year', 'Month', 'Week', 'Month_Sin', 'Month_Cos', 'Week_Sin', 'Week_Cos',
+    'AverageSellingPrice','Price_Lag_1','Price_Diff_Lag_1','Price_Roll_Mean_4',
     'Qty_Lag_1',
     'Qty_Roll_Mean_4',
-    # (อาจเพิ่ม Feature โปรโมชั่นที่คำนวณมา หรือ Feature จาก product.csv)
 ]
 target = 'QuantitySold'
 NUM_FEATURES = len(features)
