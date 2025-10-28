@@ -187,13 +187,13 @@ df['Is_Discounted_Approx'] = (df['Discount_Pct_Approx'] > 0.05).astype(int) # �
 print(f"Shape before dropping NaNs: {df.shape}")
 # (ต้องเพิ่ม Lag_2, Lag_52, Roll_Std_4, Roll_Mean_12, Discount_Pct_Approx เข้าไป)
 df = df.dropna(subset=['Qty_Lag_1', 'Price_Lag_1', 'Qty_Roll_Mean_4', 'Price_Roll_Mean_4',
-                       'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12','Qty_Lag_3', 'Qty_Lag_4', 'Qty_Lag_8', 'Price_Lag_2', 'Qty_Roll_Mean_8', 'Qty_Roll_Std_8', 'Qty_Roll_Max_8', 'Price_Roll_Mean_8', 'Qty_Roll_Max_4', 'Qty_Roll_Max_12'
+                       'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12','Qty_Lag_3', 'Qty_Lag_4', 'Qty_Lag_8', 'Price_Lag_2', 'Qty_Roll_Mean_8', 'Qty_Roll_Std_8', 'Qty_Roll_Max_8', 'Price_Roll_Mean_8', 'Qty_Roll_Max_4', 'Qty_Roll_Max_12',
                        'Discount_Pct_Approx'])
 # กรองสินค้าที่มียอดขาย (ใน Train Set) น้อยเกินไป
 print("Filtering out low-volume products...")
 # เราจะคำนวณยอดขายรวมของ DataFrame ปัจจุบัน (df)
 total_sales_per_product = df.groupby('product_id')['QuantitySold'].transform('sum')
-df = df[total_sales_per_product > 10] #<-- ลองปรับเลข 10 นี้ได้ (เช่น 5 หรือ 20)
+df = df[total_sales_per_product > 5] #<-- ลองปรับเลข 10 นี้ได้ (เช่น 5 หรือ 20)
 print(f"Shape after filtering low-volume products: {df.shape}")
 print(f"Shape after dropping NaNs: {df.shape}")
 
@@ -207,7 +207,7 @@ features = [
     'AverageSellingPrice', 'Price_Lag_1', 'Price_Diff_Lag_1', 'Price_Roll_Mean_4',
     # Lag/Rolling Demand Features
     'Qty_Lag_1', 'Qty_Roll_Mean_4',
-    'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12', 'Qty_Lag_3', 'Qty_Lag_4', 'Qty_Lag_8', 'Price_Lag_2', 'Qty_Roll_Mean_8', 'Qty_Roll_Std_8', 'Qty_Roll_Max_8', 'Price_Roll_Mean_8', 'Qty_Roll_Max_4', 'Qty_Roll_Max_12'
+    'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12', 'Qty_Lag_3', 'Qty_Lag_4', 'Qty_Lag_8', 'Price_Lag_2', 'Qty_Roll_Mean_8', 'Qty_Roll_Std_8', 'Qty_Roll_Max_8', 'Price_Roll_Mean_8', 'Qty_Roll_Max_4', 'Qty_Roll_Max_12',
     # Promotion Features (Inferred)
     'Discount_Pct_Approx', 'Is_Discounted_Approx' ,
     'Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean'
@@ -255,12 +255,12 @@ print("\n=== Training and Comparing Models (Olist) ===")
 models = {
     "Linear Regression": LinearRegression(),
     "Random Forest": RandomForestRegressor(
-        n_estimators=300,
-        min_samples_leaf=3, 
+        n_estimators=500,
+        min_samples_leaf=5, 
         random_state=42,
         n_jobs=-1,
         verbose=0,
-        max_depth=25
+        max_depth=20
     ),
     "Neural Network (MLP)": MLPRegressor(
         hidden_layer_sizes=(100,50,25),
@@ -274,7 +274,7 @@ models = {
 
     "LightGBM": LGBMRegressor(
         n_estimators=500,
-        learning_rate=0.05,
+        learning_rate=0.01,
         num_leaves=41,
         n_jobs=-1,
         random_state=42
