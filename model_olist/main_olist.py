@@ -6,6 +6,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
 import functools
 import warnings
+import holidays
 from lightgbm import LGBMRegressor
 
 # --- 1. IMPORT MODELS FOR COMPARISON ---
@@ -31,6 +32,8 @@ try:
     df_items = pd.read_csv('olist_order_items_dataset.csv')
     df_products = pd.read_csv('olist_products_dataset.csv')
     df_trans = pd.read_csv('product_category_name_translation.csv')
+    df_sellers = pd.read_csv('olist_sellers_dataset.csv')
+    print("Olist CSV files loaded successfully.")
     # (อาจเพิ่มไฟล์อื่นถ้าต้องการ Feature เพิ่มเติม)
     print("Olist CSV files loaded successfully.")
 except FileNotFoundError as e:
@@ -52,12 +55,22 @@ df = pd.merge(df_orders, df_items, on='order_id', how='inner')
 df = pd.merge(df, df_products, on='product_id', how='left')
 df = pd.merge(df, df_trans, on='product_category_name', how='left')
 
+df_merged = pd.merge(df_orders, df_items, on='order_id', how='inner')
+df_merged = pd.merge(df_merged, df_products, on='product_id', how='left')
+df_merged = pd.merge(df_merged, df_trans, on='product_category_name', how='left')
+df_merged = pd.merge(df_merged, df_sellers[['seller_id', 'seller_state']], on='seller_id', how='left')
+df_merged['seller_state'] = df_merged['seller_state'].fillna('Unknown')
+le_state = LabelEncoder()
+df_merged['seller_state_encoded'] = le_state.fit_transform(df_merged['seller_state'])
+df = df_merged.copy()
+
 # เลือกคอลัมน์ที่จำเป็น + สร้าง Quantity (order_item_id คือ ลำดับ item ใน order ไม่ใช่ quantity)
 df['quantity'] = 1 # Assume each row in order_items is 1 unit sold for simplicity
 df_agg = df[[
     'order_purchase_timestamp',
     'product_id',
     'product_category_name_english',
+    'seller_state_encoded',
     'price', # ราคาขายต่อหน่วย
     'quantity', # สร้างคอลัมน์ quantity
     'product_weight_g',
@@ -77,7 +90,7 @@ df_agg['Date'] = df_agg['order_purchase_timestamp']
 df_agg = df_agg.set_index('Date')
 
 # รวมยอดขายและคำนวณราคาเฉลี่ย รายสัปดาห์ ต่อ Product
-weekly_data = df_agg.groupby(['product_id', 'product_category_name_english', pd.Grouper(freq='W-MON')]).agg(
+weekly_data = df_agg.groupby(['product_id', 'product_category_name_english', 'seller_state_encoded', pd.Grouper(freq='W-MON')]).agg(
     QuantitySold=('quantity', 'count'), # ใช้ count เพราะเราสมมติว่า 1 แถว = 1 ชิ้น
     AverageSellingPrice=('price', 'mean'),
     Weight_g_Mean=('product_weight_g', 'mean'),
@@ -121,85 +134,109 @@ print(f"Date range: {df['Date'].min()} to {df['Date'].max()}")
 print("\n=== Creating Olist Weekly Features ===")
 df = df.sort_values(by=['product_id', 'Date'])
 
-# Encode Category
+# 6.1 Encode Category
 print("Encoding categorical features (Category)...")
 encoders = {}
 le_cat = LabelEncoder()
+# แปลงเป็น category เพื่อลดหน่วยความจำ (ทางเลือก)
+# df['product_category_name_english'] = df['product_category_name_english'].astype('category')
 df['category_encoded'] = le_cat.fit_transform(df['product_category_name_english'])
 encoders['category'] = le_cat
 encoders['product_id'] = 'Numeric'
 
-# Time Features
+# 6.2 Time features (ต้องมาก่อน เพื่อใช้ประกอบกับ holiday)
 print("Creating time features...")
 df['Year'] = df['Date'].dt.year
 df['Month'] = df['Date'].dt.month
-df['Week'] = df['Date'].dt.isocalendar().week.astype(float)
-# --- !! เพิ่มเติม !! ---
-df['DayOfWeek'] = df['Date'].dt.dayofweek # 0=Monday, 6=Sunday
+# เก็บ Week เป็น int ก่อน (เหมาะกับการ merge/groupby)
+df['Week'] = df['Date'].dt.isocalendar().week.astype(int)
+df['DayOfWeek'] = df['Date'].dt.dayofweek          # 0=Mon, 6=Sun
 df['IsWeekend'] = df['DayOfWeek'].isin([5, 6]).astype(int)
 df['Quarter'] = df['Date'].dt.quarter
-# --------------------
+
+# 6.3 Holiday → สร้าง IsHolidayWeek จากปฏิทินจริง แล้ว merge ด้วย (Year, Week)
+print("Building holiday-week feature...")
+br_holidays = holidays.Brazil(
+    years=range(df['Date'].dt.year.min(), df['Date'].dt.year.max() + 1)
+)
+holiday_df = pd.DataFrame({'hday': pd.to_datetime(list(br_holidays.keys()))})
+holiday_df['Year'] = holiday_df['hday'].dt.year
+holiday_df['Week'] = holiday_df['hday'].dt.isocalendar().week.astype(int)
+holiday_weeks = holiday_df[['Year', 'Week']].drop_duplicates()
+holiday_weeks['IsHolidayWeek'] = 1
+
+df = df.merge(holiday_weeks, on=['Year', 'Week'], how='left')
+df['IsHolidayWeek'] = df['IsHolidayWeek'].fillna(0).astype(int)
+
+# 6.4 Cyclical time features (ค่อยแปลง Week → float สำหรับ sine/cos)
 df['Month_Sin'] = np.sin(2 * np.pi * df['Month']/12)
 df['Month_Cos'] = np.cos(2 * np.pi * df['Month']/12)
-df['Week_Sin'] = np.sin(2 * np.pi * df['Week']/52)
-df['Week_Cos'] = np.cos(2 * np.pi * df['Week']/52)
+df['Week'] = df['Week'].astype(float)
+df['Week_Sin']  = np.sin(2 * np.pi * df['Week']/52)
+df['Week_Cos']  = np.cos(2 * np.pi * df['Week']/52)
 
-# Lag Features (ใช้ QuantitySold และ AverageSellingPrice)
+# 6.5 Lag features (Demand & Price)
 print("Creating lag features...")
-df['Qty_Lag_1'] = df.groupby('product_id')['QuantitySold'].shift(1)
+df['Qty_Lag_1']  = df.groupby('product_id')['QuantitySold'].shift(1)
 df['Price_Lag_1'] = df.groupby('product_id')['AverageSellingPrice'].shift(1)
 df['Price_Diff_Lag_1'] = df['AverageSellingPrice'] - df['Price_Lag_1']
-# --- !! เพิ่มเติม !! ---
-df['Qty_Lag_2'] = df.groupby('product_id')['QuantitySold'].shift(2) # Lag 2 สัปดาห์
-df['Qty_Lag_52'] = df.groupby('product_id')['QuantitySold'].shift(52) # Lag 1 ปี
-df['Qty_Lag_3'] = df.groupby('product_id')['QuantitySold'].shift(3)
-df['Qty_Lag_4'] = df.groupby('product_id')['QuantitySold'].shift(4)
-df['Qty_Lag_8'] = df.groupby('product_id')['QuantitySold'].shift(8)
+
+df['Qty_Lag_2']  = df.groupby('product_id')['QuantitySold'].shift(2)
+df['Qty_Lag_3']  = df.groupby('product_id')['QuantitySold'].shift(3)
+df['Qty_Lag_4']  = df.groupby('product_id')['QuantitySold'].shift(4)
+df['Qty_Lag_8']  = df.groupby('product_id')['QuantitySold'].shift(8)
+df['Qty_Lag_52'] = df.groupby('product_id')['QuantitySold'].shift(52)
+
 df['Price_Lag_2'] = df.groupby('product_id')['AverageSellingPrice'].shift(2)
-# --------------------
 
-# Rolling Mean Features
-print("Creating rolling mean features...")
-df['Qty_Roll_Mean_4'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4, min_periods=1).mean()
-df['Price_Roll_Mean_4'] = df.groupby('product_id')['AverageSellingPrice'].shift(1).rolling(window=4, min_periods=1).mean()
-# --- !! เพิ่มเติม !! ---
-df['Qty_Roll_Std_4'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4, min_periods=1).std() # Std 4 สัปดาห์
-df['Qty_Roll_Mean_12'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=12, min_periods=1).mean() # Mean 12 สัปดาห์
-# Window 8
-df['Qty_Roll_Mean_8'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=8, min_periods=1).mean()
-df['Qty_Roll_Std_8'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=8, min_periods=1).std()
-df['Qty_Roll_Max_8'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=8, min_periods=1).max()
-df['Price_Roll_Mean_8'] = df.groupby('product_id')['AverageSellingPrice'].shift(1).rolling(window=8, min_periods=1).mean()
+# 6.6 Rolling features
+print("Creating rolling mean/std/max features...")
+df['Qty_Roll_Mean_4']  = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4,  min_periods=1).mean()
+df['Price_Roll_Mean_4'] = df.groupby('product_id')['AverageSellingPrice'].shift(1).rolling(window=4,  min_periods=1).mean()
 
-# เพิ่ม .max() สำหรับ window เดิม
-df['Qty_Roll_Max_4'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4, min_periods=1).max()
-df['Qty_Roll_Max_12'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=12, min_periods=1).max()
-# --------------------
+df['Qty_Roll_Std_4']    = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4,  min_periods=1).std()
+df['Qty_Roll_Mean_12']  = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=12, min_periods=1).mean()
 
-# --- !! เพิ่ม Feature โปรโมชั่นโดยประมาณ !! ---
+df['Qty_Roll_Mean_8']   = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=8,  min_periods=1).mean()
+df['Qty_Roll_Std_8']    = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=8,  min_periods=1).std()
+df['Qty_Roll_Max_8']    = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=8,  min_periods=1).max()
+df['Price_Roll_Mean_8'] = df.groupby('product_id')['AverageSellingPrice'].shift(1).rolling(window=8,  min_periods=1).mean()
+
+df['Qty_Roll_Max_4']    = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4,  min_periods=1).max()
+df['Qty_Roll_Max_12']   = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=12, min_periods=1).max()
+
+# 6.7 Inferred promotion features
 print("Creating inferred promotion features...")
-# คำนวณ % ส่วนลด เทียบกับราคาเฉลี่ย 4 สัปดาห์ก่อนหน้า
 df['Discount_Pct_Approx'] = (df['Price_Roll_Mean_4'] - df['AverageSellingPrice']) / (df['Price_Roll_Mean_4'] + 1e-6)
-df['Is_Discounted_Approx'] = (df['Discount_Pct_Approx'] > 0.05).astype(int) # สมมติว่าลด > 5% คือโปรโมชั่น
-# ----------------------------------------
+df['Is_Discounted_Approx'] = (df['Discount_Pct_Approx'] > 0.05).astype(int)
 
-# Drop rows with NaNs created by Lag/Rolling features (ต้อง Drop เพิ่มเพราะมี Lag_52)
+# 6.8 Interaction features (ต้องมี seller_state_encoded ใน df)
+print("Creating interaction features...")
+df['Cat_x_Weekend'] = df['category_encoded'] * df['IsWeekend']
+df['PriceLag1_x_MonthSin'] = df['Price_Lag_1'].fillna(0) * df['Month_Sin']
+df['QtyLag1_x_SellerState'] = df['Qty_Lag_1'].fillna(0) * df['seller_state_encoded']
+
+# 6.9 Drop NaNs ที่เกิดจาก lag/rolling (รวมถึงฟีเจอร์ที่เพิ่มมา)
 print(f"Shape before dropping NaNs: {df.shape}")
-# (ต้องเพิ่ม Lag_2, Lag_52, Roll_Std_4, Roll_Mean_12, Discount_Pct_Approx เข้าไป)
-df = df.dropna(subset=['Qty_Lag_1', 'Price_Lag_1', 'Qty_Roll_Mean_4', 'Price_Roll_Mean_4',
-                       'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12','Qty_Lag_3', 'Qty_Lag_4', 'Qty_Lag_8', 'Price_Lag_2', 'Qty_Roll_Mean_8', 'Qty_Roll_Std_8', 'Qty_Roll_Max_8', 'Price_Roll_Mean_8', 'Qty_Roll_Max_4', 'Qty_Roll_Max_12',
-                       'Discount_Pct_Approx'])
-# กรองสินค้าที่มียอดขาย (ใน Train Set) น้อยเกินไป
+df = df.dropna(subset=[
+    'Qty_Lag_1', 'Price_Lag_1', 'Qty_Roll_Mean_4', 'Price_Roll_Mean_4',
+    'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12',
+    'Qty_Lag_3', 'Qty_Lag_4', 'Qty_Lag_8', 'Price_Lag_2',
+    'Qty_Roll_Mean_8', 'Qty_Roll_Std_8', 'Qty_Roll_Max_8', 'Price_Roll_Mean_8',
+    'Qty_Roll_Max_4', 'Qty_Roll_Max_12',
+    'Discount_Pct_Approx', 'Cat_x_Weekend', 'PriceLag1_x_MonthSin', 'QtyLag1_x_SellerState'
+])
+
+# 6.10 กรองสินค้าที่ volume ต่ำ (เพื่อโมเดลนิ่งขึ้น)
 print("Filtering out low-volume products...")
-# เราจะคำนวณยอดขายรวมของ DataFrame ปัจจุบัน (df)
 total_sales_per_product = df.groupby('product_id')['QuantitySold'].transform('sum')
-df = df[total_sales_per_product > 5] #<-- ลองปรับเลข 10 นี้ได้ (เช่น 5 หรือ 20)
+df = df[total_sales_per_product > 5]   # ปรับ threshold ได้ เช่น 5, 10, 20
 print(f"Shape after filtering low-volume products: {df.shape}")
 print(f"Shape after dropping NaNs: {df.shape}")
 
 # --- 7. OLIST FEATURE LIST ---
 features = [
-    'category_encoded',
+    'category_encoded', 'seller_state_encoded',
     # Time Features
     'Year', 'Month', 'Week', 'Month_Sin', 'Month_Cos', 'Week_Sin', 'Week_Cos',
     'DayOfWeek', 'IsWeekend', 'Quarter', 
@@ -210,7 +247,8 @@ features = [
     'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12', 'Qty_Lag_3', 'Qty_Lag_4', 'Qty_Lag_8', 'Price_Lag_2', 'Qty_Roll_Mean_8', 'Qty_Roll_Std_8', 'Qty_Roll_Max_8', 'Price_Roll_Mean_8', 'Qty_Roll_Max_4', 'Qty_Roll_Max_12',
     # Promotion Features (Inferred)
     'Discount_Pct_Approx', 'Is_Discounted_Approx' ,
-    'Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean'
+    'Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean',
+    'Cat_x_Weekend', 'PriceLag1_x_MonthSin', 'QtyLag1_x_SellerState'
 ]
 # (คำนวณ NUM_FEATURES ใหม่)
 target = 'QuantitySold'
