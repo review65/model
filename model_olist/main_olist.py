@@ -152,6 +152,10 @@ df['Price_Diff_Lag_1'] = df['AverageSellingPrice'] - df['Price_Lag_1']
 # --- !! เพิ่มเติม !! ---
 df['Qty_Lag_2'] = df.groupby('product_id')['QuantitySold'].shift(2) # Lag 2 สัปดาห์
 df['Qty_Lag_52'] = df.groupby('product_id')['QuantitySold'].shift(52) # Lag 1 ปี
+df['Qty_Lag_3'] = df.groupby('product_id')['QuantitySold'].shift(3)
+df['Qty_Lag_4'] = df.groupby('product_id')['QuantitySold'].shift(4)
+df['Qty_Lag_8'] = df.groupby('product_id')['QuantitySold'].shift(8)
+df['Price_Lag_2'] = df.groupby('product_id')['AverageSellingPrice'].shift(2)
 # --------------------
 
 # Rolling Mean Features
@@ -161,6 +165,15 @@ df['Price_Roll_Mean_4'] = df.groupby('product_id')['AverageSellingPrice'].shift(
 # --- !! เพิ่มเติม !! ---
 df['Qty_Roll_Std_4'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4, min_periods=1).std() # Std 4 สัปดาห์
 df['Qty_Roll_Mean_12'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=12, min_periods=1).mean() # Mean 12 สัปดาห์
+# Window 8
+df['Qty_Roll_Mean_8'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=8, min_periods=1).mean()
+df['Qty_Roll_Std_8'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=8, min_periods=1).std()
+df['Qty_Roll_Max_8'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=8, min_periods=1).max()
+df['Price_Roll_Mean_8'] = df.groupby('product_id')['AverageSellingPrice'].shift(1).rolling(window=8, min_periods=1).mean()
+
+# เพิ่ม .max() สำหรับ window เดิม
+df['Qty_Roll_Max_4'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4, min_periods=1).max()
+df['Qty_Roll_Max_12'] = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=12, min_periods=1).max()
 # --------------------
 
 # --- !! เพิ่ม Feature โปรโมชั่นโดยประมาณ !! ---
@@ -174,8 +187,14 @@ df['Is_Discounted_Approx'] = (df['Discount_Pct_Approx'] > 0.05).astype(int) # �
 print(f"Shape before dropping NaNs: {df.shape}")
 # (ต้องเพิ่ม Lag_2, Lag_52, Roll_Std_4, Roll_Mean_12, Discount_Pct_Approx เข้าไป)
 df = df.dropna(subset=['Qty_Lag_1', 'Price_Lag_1', 'Qty_Roll_Mean_4', 'Price_Roll_Mean_4',
-                       'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12',
+                       'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12','Qty_Lag_3', 'Qty_Lag_4', 'Qty_Lag_8', 'Price_Lag_2', 'Qty_Roll_Mean_8', 'Qty_Roll_Std_8', 'Qty_Roll_Max_8', 'Price_Roll_Mean_8', 'Qty_Roll_Max_4', 'Qty_Roll_Max_12'
                        'Discount_Pct_Approx'])
+# กรองสินค้าที่มียอดขาย (ใน Train Set) น้อยเกินไป
+print("Filtering out low-volume products...")
+# เราจะคำนวณยอดขายรวมของ DataFrame ปัจจุบัน (df)
+total_sales_per_product = df.groupby('product_id')['QuantitySold'].transform('sum')
+df = df[total_sales_per_product > 10] #<-- ลองปรับเลข 10 นี้ได้ (เช่น 5 หรือ 20)
+print(f"Shape after filtering low-volume products: {df.shape}")
 print(f"Shape after dropping NaNs: {df.shape}")
 
 # --- 7. OLIST FEATURE LIST ---
@@ -188,7 +207,7 @@ features = [
     'AverageSellingPrice', 'Price_Lag_1', 'Price_Diff_Lag_1', 'Price_Roll_Mean_4',
     # Lag/Rolling Demand Features
     'Qty_Lag_1', 'Qty_Roll_Mean_4',
-    'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12', 
+    'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12', 'Qty_Lag_3', 'Qty_Lag_4', 'Qty_Lag_8', 'Price_Lag_2', 'Qty_Roll_Mean_8', 'Qty_Roll_Std_8', 'Qty_Roll_Max_8', 'Price_Roll_Mean_8', 'Qty_Roll_Max_4', 'Qty_Roll_Max_12'
     # Promotion Features (Inferred)
     'Discount_Pct_Approx', 'Is_Discounted_Approx' ,
     'Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean'
@@ -236,14 +255,15 @@ print("\n=== Training and Comparing Models (Olist) ===")
 models = {
     "Linear Regression": LinearRegression(),
     "Random Forest": RandomForestRegressor(
-        n_estimators=200,
-        min_samples_leaf=5, 
+        n_estimators=300,
+        min_samples_leaf=3, 
         random_state=42,
         n_jobs=-1,
-        verbose=0
+        verbose=0,
+        max_depth=25
     ),
     "Neural Network (MLP)": MLPRegressor(
-        hidden_layer_sizes=(64, 32),
+        hidden_layer_sizes=(100,50,25),
         activation='relu',
         random_state=42,
         max_iter=500,
@@ -253,9 +273,9 @@ models = {
     ),
 
     "LightGBM": LGBMRegressor(
-        n_estimators=300,
+        n_estimators=500,
         learning_rate=0.05,
-        num_leaves=31,
+        num_leaves=41,
         n_jobs=-1,
         random_state=42
     )
