@@ -22,22 +22,20 @@ warnings.filterwarnings('ignore')
 os.environ['PYTHONWARNINGS'] = 'ignore'
 
 # =============================================================================
-# CONFIGURATION - ปรับให้เทรนเฉพาะ Fashion Products
+# CONFIGURATION - ปรับให้เทรนเฉพาะ Fashion Products (fashion_* only)
 # =============================================================================
 MIN_SALES_THRESHOLD = 10  # ยอดขายขั้นต่ำต่อสินค้า
 TOP_N_PRODUCTS = 500
 NUM_PRODUCTS_TO_OPTIMIZE = 5  # เพิ่มจาก 3 เป็น 5
 PRODUCT_COSTS = [10, 15, 20, 12, 18]  # เพิ่ม cost สำหรับสินค้าที่ 4-5
 
-# Fashion categories ที่ต้องการวิเคราะห์
-FASHION_KEYWORDS = ['fashion', 'watches_gifts', 'cool_stuff']
-
+# Fashion categories - only fashion_* categories
 def is_fashion_category(category_name):
-    """ตรวจสอบว่าหมวดหมู่เป็น fashion หรือไม่"""
+    """ตรวจสอบว่าหมวดหมู่เป็น fashion หรือไม่ (เฉพาะที่ขึ้นต้นด้วย fashion_)"""
     if pd.isna(category_name):
         return False
     category_lower = str(category_name).lower()
-    return any(keyword in category_lower for keyword in FASHION_KEYWORDS)
+    return category_lower.startswith('fashion_')
 
 IMPORTANT_LAGS = [1, 4]
 IMPORTANT_ROLLS = [4]
@@ -172,16 +170,16 @@ df = pd.merge(df, df_products, on='product_id', how='left')
 df = pd.merge(df, df_trans, on='product_category_name', how='left')
 df = pd.merge(df, df_sellers[['seller_id', 'seller_state']], on='seller_id', how='left')
 
-# ===== กรองเฉพาะ Fashion Categories =====
-print("\n=== Filtering Fashion Products Only ===")
+# ===== กรองเฉพาะ Fashion Categories (fashion_* only) =====
+print("\n=== Filtering Fashion Products Only (fashion_*) ===")
 print(f"Records before filtering: {len(df):,}")
 
 df = df[df['product_category_name_english'].apply(is_fashion_category)].copy()
 print(f"✓ Records after fashion filter: {len(df):,}")
 print(f"✓ Fashion categories found: {df['product_category_name_english'].nunique()}")
 print(f"✓ Fashion products found: {df['product_id'].nunique()}")
-print("\nTop 10 Fashion Categories:")
-print(df['product_category_name_english'].value_counts().head(10))
+print("\nFashion Categories (fashion_* only):")
+print(df['product_category_name_english'].value_counts())
 
 # ===== ดำเนินการต่อ =====
 df['seller_state'] = df['seller_state'].fillna('Unknown')
@@ -349,7 +347,7 @@ def _evaluate_and_record(name, model_obj, X_tr, y_tr, X_te, y_te):
     return row, y_pred_te, model_obj
 
 print("\n" + "="*90)
-print("TRAIN & EVALUATE ALL MODELS (Fashion Products Only)")
+print("TRAIN & EVALUATE ALL MODELS (Fashion Products Only - fashion_*)")
 print("="*90)
 
 models = {
@@ -417,7 +415,7 @@ cross_validate_simple(best_model, X_train_scaled[sample_idx], y_train[sample_idx
 # PRICE OPTIMIZATION (Product-Level) - ใช้ best_model
 # =============================================================================
 print("\n" + "="*90)
-print("PRICE OPTIMIZATION (PRODUCT-LEVEL) - Fashion Items")
+print("PRICE OPTIMIZATION (PRODUCT-LEVEL) - Fashion Items (fashion_* only)")
 print("="*90)
 
 df_train = df.iloc[:split_idx].copy()
@@ -510,7 +508,7 @@ for i, prod_id in enumerate(target_products):
 # SUMMARY (Product-Level)
 # =============================================================================
 print("\n" + "="*70)
-print("OPTIMIZATION SUMMARY - FASHION PRODUCTS")
+print("OPTIMIZATION SUMMARY - FASHION PRODUCTS (fashion_* only)")
 print("="*70)
 
 total_profit = 0
@@ -527,5 +525,5 @@ print(f"TOTAL EXPECTED PROFIT (Fashion Products): R${total_profit:,.2f}")
 print(f"{'='*70}")
 
 print("\n✓ Script finished successfully!")
-print(f"✓ Model trained on {len(popular_products):,} fashion products")
+print(f"✓ Model trained on {len(popular_products):,} fashion_* products")
 print(f"✓ {NUM_PRODUCTS_TO_OPTIMIZE} products optimized")

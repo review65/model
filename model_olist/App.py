@@ -45,15 +45,13 @@ REPORT_FOLDER = 'reports'
 # Exchange rate: 1 BRL (Brazilian Real) = 6.8 THB (Thai Baht)
 BRL_TO_THB = 6.8
 
-# Fashion categories filter
-FASHION_KEYWORDS = ['fashion', 'watches_gifts', 'cool_stuff']
-
+# Fashion categories filter - only fashion_* categories
 def is_fashion_category(category_name):
-    """ตรวจสอบว่าหมวดหมู่เป็น fashion หรือไม่"""
+    """ตรวจสอบว่าหมวดหมู่เป็น fashion หรือไม่ (เฉพาะที่ขึ้นต้นด้วย fashion_)"""
     if pd.isna(category_name):
         return False
     category_lower = str(category_name).lower()
-    return any(keyword in category_lower for keyword in FASHION_KEYWORDS)
+    return category_lower.startswith('fashion_')
 
 for folder in [UPLOAD_FOLDER, MODEL_FOLDER, REPORT_FOLDER]:
     os.makedirs(folder, exist_ok=True)
@@ -89,19 +87,6 @@ def get_dashboard_metrics():
         
         if weekly_data is None:
             return jsonify({'error': 'No data loaded'}), 400
-        
-        # คำนวณ R2 score ถ้าโมเดลมีอยู่
-        model_accuracy = 0.0
-        if model and df_test is not None:
-            try:
-                X_test = df_test[feature_cols].values
-                y_test = df_test['QuantitySold'].values
-                X_test_scaled = scaler.transform(X_test)
-                y_pred_test = model.predict(X_test_scaled)
-                model_accuracy = r2_score(y_test, y_pred_test)
-            except Exception as e:
-                print(f"Error calculating R2: {e}")
-                model_accuracy = 0.0
 
         # Calculate metrics
         total_revenue_brl = (weekly_data['QuantitySold'] * weekly_data['AverageSellingPrice']).sum()
@@ -134,7 +119,6 @@ def get_dashboard_metrics():
             'total_sales': int(total_sales),
             'revenue_change': round(revenue_change, 1),
             'sales_change': round(sales_change, 1),
-            'model_accuracy': round(model_accuracy, 3) if model_accuracy > 0 else 0.0,
             'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
         
@@ -483,7 +467,7 @@ def train_model():
         df = pd.merge(df, df_trans, on='product_category_name', how='left')
         df = pd.merge(df, df_sellers[['seller_id', 'seller_state']], on='seller_id', how='left')
         
-        # ===== กรองเฉพาะ Fashion Products =====
+        # ===== กรองเฉพาะ Fashion Products (fashion_* only) =====
         print(f"Records before fashion filter: {len(df):,}")
         df = df[df['product_category_name_english'].apply(is_fashion_category)].copy()
         print(f"Records after fashion filter: {len(df):,}")
@@ -630,15 +614,7 @@ def train_model():
             'data_size': len(weekly_data),
             'num_products': len(popular_products),
             'num_categories': weekly_data['product_category_name_english'].nunique(),
-            'product_type': 'Fashion Products Only',
-            'metrics': {
-                'train_r2': round(train_r2, 4),
-                'test_r2': round(test_r2, 4),
-                'test_mae': round(test_mae, 2),
-                'test_rmse': round(test_rmse, 2),
-                'test_mape': round(test_mape, 2)
-            },
-            'feature_importance': get_feature_importance()
+            'product_type': 'Fashion Products Only'
         }
         
         return jsonify(result)
@@ -752,7 +728,7 @@ if __name__ == '__main__':
     print(f"Server running on http://localhost:5000")
     print(f"Currency: Brazilian Real (R$) + Thai Baht (฿)")
     print(f"Exchange Rate: 1 BRL = {BRL_TO_THB} THB")
-    print(f"Product Focus: Fashion Items Only")
+    print(f"Product Focus: Fashion Items Only (fashion_*)")
     print(f"Model Level: Product-Level (not Category)")
     print(f"Upload folder: {UPLOAD_FOLDER}")
     print(f"Model folder: {MODEL_FOLDER}")

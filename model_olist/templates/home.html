@@ -363,30 +363,6 @@
             font-size: 14px;
             color: #64748b;
         }
-
-        .product-selector {
-            max-height: 300px;
-            overflow-y: auto;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            padding: 8px;
-        }
-
-        .product-item {
-            padding: 12px;
-            border-bottom: 1px solid #f1f5f9;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .product-item:hover {
-            background: #fce7f3;
-        }
-
-        .product-item.selected {
-            background: #fce7f3;
-            border-left: 4px solid #ec4899;
-        }
     </style>
 </head>
 <body>
@@ -396,7 +372,7 @@
                 👗 Fashion Dynamic Pricing System (Product-Level)
                 <span class="currency-badge">R$ BRL</span>
                 <span class="currency-badge" style="background: #6366f1;">฿ THB</span>
-                <span class="currency-badge fashion-badge">Fashion Only</span>
+                <span class="currency-badge fashion-badge">Fashion_* Only</span>
             </h1>
             <p>ระบบกำหนดราคาอัจฉริยะสำหรับสินค้าแฟชั่น - วิเคราะห์ในระดับรายการสินค้า (Product-Level)</p>
         </div>
@@ -470,10 +446,9 @@
                 
                 <div class="form-group">
                     <label class="form-label">Select Fashion Product</label>
-                    <input type="text" id="optimizeProductSearch" class="input-field" placeholder="Search product..." onkeyup="filterOptimizeProducts()">
-                    <div id="optimizeProductList" class="product-selector">
-                        <div class="loading">Loading products...</div>
-                    </div>
+                    <select id="productDropdown" class="select-field">
+                        <option value="">-- Select Product --</option>
+                    </select>
                 </div>
                 
                 <div class="form-group">
@@ -499,14 +474,14 @@
                 <div class="file-upload" onclick="document.getElementById('fileInput').click()">
                     <p>📁 Click to upload CSV files</p>
                     <p style="font-size: 12px; color: #64748b;">Required: orders, items, products, sellers, translation</p>
-                    <p style="font-size: 12px; color: #ec4899; font-weight: 600;">⚠ Only FASHION products will be processed</p>
+                    <p style="font-size: 12px; color: #ec4899; font-weight: 600;">⚠ Only FASHION_* products will be processed</p>
                     <input type="file" id="fileInput" multiple accept=".csv" style="display: none;" onchange="handleFileUpload(event)">
                 </div>
                 
                 <div id="fileStatus" style="margin-top: 20px;"></div>
                 
                 <button class="btn btn-primary" id="trainButton" onclick="trainModel()" disabled style="margin-top: 20px;">
-                    Train Model (Fashion Only)
+                    Train Model (Fashion_* Only)
                 </button>
                 
                 <div id="trainingResult" style="margin-top: 20px;"></div>
@@ -623,55 +598,31 @@
                 
                 if (res.ok) {
                     allProducts = data.products;
-                    displayOptimizeProducts(allProducts);
+                    populateProductDropdown(allProducts);
                 }
             } catch (error) {
                 showToast('Error loading products: ' + error.message, 'error');
             }
         }
 
-        function displayOptimizeProducts(products) {
-            const container = document.getElementById('optimizeProductList');
+        function populateProductDropdown(products) {
+            const dropdown = document.getElementById('productDropdown');
+            
+            // Clear existing options except first one
+            dropdown.innerHTML = '<option value="">-- Select Product --</option>';
             
             if (products.length === 0) {
-                container.innerHTML = '<p style="text-align: center; color: #64748b;">No products available</p>';
+                dropdown.innerHTML = '<option value="">No products available</option>';
                 return;
             }
             
-            let html = '';
-            products.slice(0, 50).forEach(p => {  // แสดงแค่ 50 รายการแรก
-                html += `
-                    <div class="product-item" onclick="selectProduct('${p.product_id}', this)">
-                        <div style="font-weight: 600; color: #0f172a;">${p.product_id_short}</div>
-                        <div style="font-size: 12px; color: #64748b;">${p.category}</div>
-                        <div style="font-size: 12px; color: #64748b;">Avg Price: ${formatBRL(p.avg_price_brl)}</div>
-                    </div>
-                `;
+            // Add products to dropdown
+            products.forEach(p => {
+                const option = document.createElement('option');
+                option.value = p.product_id;
+                option.textContent = `${p.product_id_short} - ${p.category} (${formatBRL(p.avg_price_brl)})`;
+                dropdown.appendChild(option);
             });
-            
-            container.innerHTML = html;
-        }
-
-        function filterOptimizeProducts() {
-            const search = document.getElementById('optimizeProductSearch').value.toLowerCase();
-            const filtered = allProducts.filter(p => 
-                p.product_id.toLowerCase().includes(search) || 
-                p.category.toLowerCase().includes(search)
-            );
-            displayOptimizeProducts(filtered);
-        }
-
-        function selectProduct(productId, element) {
-            // Remove previous selection
-            document.querySelectorAll('.product-item').forEach(item => {
-                item.classList.remove('selected');
-            });
-            
-            // Add selection
-            element.classList.add('selected');
-            selectedProductId = productId;
-            
-            showToast('Product selected: ' + productId.substring(0, 30) + '...', 'info');
         }
 
         // Load Dashboard Data
@@ -762,6 +713,9 @@
 
         // Optimize Price
         async function optimizePrice() {
+            const dropdown = document.getElementById('productDropdown');
+            selectedProductId = dropdown.value;
+            
             if (!selectedProductId) {
                 showToast('Please select a product first', 'error');
                 return;
@@ -948,24 +902,7 @@
                 if (res.ok) {
                     document.getElementById('trainingResult').innerHTML = `
                         <div class="card" style="margin-top: 20px; background: #f0fdf4; border-color: #86efac;">
-                            <h3>✅ Training Complete! (Fashion Products)</h3>
-                            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 16px;">
-                                <div>
-                                    <p><strong>Training Time:</strong> ${data.training_time}s</p>
-                                    <p><strong>Dataset Size:</strong> ${formatNumber(data.data_size)} records</p>
-                                    <p><strong>Products:</strong> ${formatNumber(data.num_products)} fashion items</p>
-                                    <p><strong>Categories:</strong> ${data.num_categories} fashion categories</p>
-                                </div>
-                                <div>
-                                    <p><strong>R² Score (Test):</strong> ${data.metrics.test_r2}</p>
-                                    <p><strong>MAE:</strong> ${data.metrics.test_mae}</p>
-                                    <p><strong>RMSE:</strong> ${data.metrics.test_rmse}</p>
-                                    <p><strong>MAPE:</strong> ${data.metrics.test_mape}%</p>
-                                </div>
-                            </div>
-                            <p style="margin-top: 16px; color: #059669; font-weight: 600;">
-                                🎯 Model Type: ${data.product_type}
-                            </p>
+                            <h2 style="color: #059669; margin: 0;">✅ Training Complete! (Fashion Products)</h2>
                         </div>
                     `;
                     
@@ -980,7 +917,7 @@
                 showToast('Training error: ' + error.message, 'error');
             } finally {
                 button.disabled = false;
-                button.textContent = 'Train Model (Fashion Only)';
+                button.textContent = 'Train Model (Fashion_* Only)';
             }
         }
 
