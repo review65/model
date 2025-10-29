@@ -50,7 +50,7 @@ class ParticleSwarmOptimizer:
 
             if (i + 1) % 10 == 0:
                 if self.verbose:
-                    print(f"Iteration {i+1}/{self.max_iter}, Best Profit Found: {-self.best_global_value:.2f}")
+                    print(f"Iteration {i+1}/{self.max_iter}, Best Profit Found: {-self.gbest_val:.2f}")
 
         print("\nOptimization finished.")
         return self.gbest_pos, -self.gbest_val

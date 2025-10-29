@@ -28,6 +28,7 @@ import seaborn as sns
 from io import BytesIO
 import base64
 
+from price_optimizer import ParticleSwarmOptimizer
 app = Flask(__name__)
 CORS(app)  # Enable CORS for API calls
 
@@ -274,7 +275,7 @@ def get_category_analysis(category):
 
 @app.route('/api/optimize/category', methods=['POST'])
 def optimize_category_price():
-    """Optimize price for a category (uses top product in category)"""
+    """Optimize price for a category using Particle Swarm Optimization (PSO)"""
     try:
         global model, scaler, weekly_data, feature_cols
         
@@ -307,20 +308,18 @@ def optimize_category_price():
         latest_data = product_data.iloc[-1:].copy()
         current_price_brl = float(latest_data['AverageSellingPrice'].iloc[0])
         
-        # Create price range to test
+        # Create price bounds for PSO
         lower_bound = current_price_brl * (1 - price_range)
         upper_bound = current_price_brl * (1 + price_range)
-        test_prices = np.linspace(lower_bound, upper_bound, 20)
         
-        profits_brl = []
-        profits_thb = []
-        demands = []
-        
-        # Test each price
-        for test_price in test_prices:
+        # ========== PSO Optimization ==========
+        def objective_function(params):
+            """Objective function for PSO (minimize negative profit)"""
+            test_price = params[0]
+            
             # Prepare features
             test_features = latest_data[feature_cols].copy()
-            test_features['AverageSellingPrice'] = test_price
+            test_features.loc[:, 'AverageSellingPrice'] = test_price
             
             # Scale features
             test_scaled = scaler.transform(test_features)
@@ -329,7 +328,43 @@ def optimize_category_price():
             predicted_demand = model.predict(test_scaled)[0]
             predicted_demand = max(0, round(predicted_demand))
             
-            # Calculate profit
+            # Calculate profit (negative for minimization)
+            profit_brl = (test_price - cost_brl) * predicted_demand
+            return -profit_brl
+        
+        # Run PSO
+        pso = ParticleSwarmOptimizer(
+            objective_function=objective_function,
+            bounds=[(lower_bound, upper_bound)],
+            num_particles=30,
+            max_iter=50,
+            verbose=False
+        )
+        
+        best_params, best_value = pso.optimize()
+        optimal_price_brl = float(best_params[0])
+        max_profit_brl = float(-best_value)  # Convert back to positive
+        
+        # Calculate expected demand at optimal price
+        test_features_opt = latest_data[feature_cols].copy()
+        test_features_opt.loc[:, 'AverageSellingPrice'] = optimal_price_brl
+        test_scaled_opt = scaler.transform(test_features_opt)
+        expected_demand = int(max(0, round(model.predict(test_scaled_opt)[0])))
+        
+        # ========== Generate visualization curve ==========
+        # Create curve for visualization (20 points)
+        test_prices = np.linspace(lower_bound, upper_bound, 20)
+        profits_brl = []
+        profits_thb = []
+        demands = []
+        
+        for test_price in test_prices:
+            test_features = latest_data[feature_cols].copy()
+            test_features.loc[:, 'AverageSellingPrice'] = test_price
+            test_scaled = scaler.transform(test_features)
+            predicted_demand = model.predict(test_scaled)[0]
+            predicted_demand = max(0, round(predicted_demand))
+            
             profit_brl = (test_price - cost_brl) * predicted_demand
             profit_thb = profit_brl * BRL_TO_THB
             
@@ -337,18 +372,11 @@ def optimize_category_price():
             profits_thb.append(float(profit_thb))
             demands.append(int(predicted_demand))
         
-        # Find optimal price
-        best_idx = np.argmax(profits_brl)
-        optimal_price_brl = float(test_prices[best_idx])
-        optimal_price_thb = optimal_price_brl * BRL_TO_THB
-        max_profit_brl = profits_brl[best_idx]
-        max_profit_thb = profits_thb[best_idx]
-        expected_demand = demands[best_idx]
-        
         # Calculate current profit for comparison
         current_demand = int(latest_data['QuantitySold'].iloc[0])
         current_profit_brl = (current_price_brl - cost_brl) * current_demand
         current_profit_thb = current_profit_brl * BRL_TO_THB
+        max_profit_thb = max_profit_brl * BRL_TO_THB
         
         result = {
             'category': category,
@@ -356,7 +384,7 @@ def optimize_category_price():
             'current_price_brl': round(current_price_brl, 2),
             'current_price_thb': round(current_price_brl * BRL_TO_THB, 2),
             'optimal_price_brl': round(optimal_price_brl, 2),
-            'optimal_price_thb': round(optimal_price_thb, 2),
+            'optimal_price_thb': round(optimal_price_brl * BRL_TO_THB, 2),
             'price_change_pct': round((optimal_price_brl / current_price_brl - 1) * 100, 1),
             'current_demand': current_demand,
             'expected_demand': expected_demand,
@@ -375,13 +403,17 @@ def optimize_category_price():
                 'profits_thb': [round(p, 2) for p in profits_thb],
                 'demands': demands
             },
-            'recommendation': get_price_recommendation(optimal_price_brl, current_price_brl)
+            'recommendation': get_price_recommendation(optimal_price_brl, current_price_brl),
+            'optimization_method': 'Particle Swarm Optimization (PSO)'
         }
         
         return jsonify(result)
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+
 
 
 def get_price_recommendation(optimal_price, current_price):
