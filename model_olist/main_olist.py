@@ -1,97 +1,200 @@
-# main_olist.py (Weekly Aggregation + Compare 3 Models + PSO)
+# main_olist_with_simple_evaluation.py
+# เพิ่มเฉพาะส่วน Evaluation ที่จำเป็นในโค้ดเดิม
+
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
-import functools
 import warnings
 import holidays
 from lightgbm import LGBMRegressor
+from sklearn.model_selection import train_test_split, cross_val_score
+import time
 
-# --- 1. IMPORT MODELS FOR COMPARISON ---
-from sklearn.linear_model import LinearRegression
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.neural_network import MLPRegressor
+warnings.filterwarnings('ignore', category=FutureWarning)
 
-# --- 2. IMPORT PRICE OPTIMIZER ---
-try:
-    from price_optimizer import ParticleSwarmOptimizer
-    PSO_ENABLED = True
-except ImportError:
-    print("Warning: price_optimizer.py not found. Price Optimization section will be skipped.")
-    PSO_ENABLED = False
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+MIN_SALES_THRESHOLD = 50
+TOP_N_PRODUCTS = 500
+NUM_PRODUCTS_TO_OPTIMIZE = 3
+PRODUCT_COSTS = [10, 15, 20]
 
-warnings.filterwarnings('ignore', category=FutureWarning) # Suppress pandas warnings
+IMPORTANT_LAGS = [1, 4]
+IMPORTANT_ROLLS = [4]
+PRICE_GRID_POINTS = 20
 
-# --- 3. LOAD OLIST DATA ---
+# =============================================================================
+# เพิ่ม: SIMPLE EVALUATION FUNCTIONS
+# =============================================================================
+
+def evaluate_model(y_train, y_pred_train, y_test, y_pred_test):
+    """ฟังก์ชันประเมินโมเดลแบบง่าย"""
+    
+    # คำนวณ metrics
+    train_mae = mean_absolute_error(y_train, y_pred_train)
+    test_mae = mean_absolute_error(y_test, y_pred_test)
+    train_rmse = np.sqrt(mean_squared_error(y_train, y_pred_train))
+    test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
+    train_r2 = r2_score(y_train, y_pred_train)
+    test_r2 = r2_score(y_test, y_pred_test)
+    
+    # คำนวณ MAPE
+    mask = y_test != 0
+    test_mape = np.mean(np.abs((y_test[mask] - y_pred_test[mask]) / y_test[mask])) * 100
+    
+    # แสดงผล
+    print("\n" + "="*70)
+    print("MODEL EVALUATION RESULTS")
+    print("="*70)
+    print(f"{'Metric':<20} {'Train':>15} {'Test':>15} {'Diff':>12}")
+    print("-"*70)
+    print(f"{'MAE':<20} {train_mae:>15.4f} {test_mae:>15.4f} {test_mae-train_mae:>12.4f}")
+    print(f"{'RMSE':<20} {train_rmse:>15.4f} {test_rmse:>15.4f} {test_rmse-train_rmse:>12.4f}")
+    print(f"{'R² Score':<20} {train_r2:>15.4f} {test_r2:>15.4f} {test_r2-train_r2:>12.4f}")
+    print(f"{'MAPE (%)':<20} {'-':>15} {test_mape:>15.2f} {'-':>12}")
+    print("="*70)
+    
+    # ตีความผล
+    print("\n📊 INTERPRETATION:")
+    if test_r2 > 0.8:
+        print("✓ Excellent model (R² > 0.8)")
+    elif test_r2 > 0.7:
+        print("✓ Good model (R² > 0.7)")
+    elif test_r2 > 0.6:
+        print("⚠ Fair model (R² > 0.6)")
+    else:
+        print("✗ Poor model (R² < 0.6)")
+    
+    # เช็ค overfitting
+    r2_diff = train_r2 - test_r2
+    if r2_diff < 0.1:
+        print("✓ No overfitting (Train-Test R² < 0.1)")
+    elif r2_diff < 0.2:
+        print("⚠ Slight overfitting (Train-Test R² < 0.2)")
+    else:
+        print("✗ Significant overfitting (Train-Test R² > 0.2)")
+    
+    if test_mape < 20:
+        print(f"✓ Good accuracy (MAPE = {test_mape:.1f}%)")
+    else:
+        print(f"⚠ Consider improving (MAPE = {test_mape:.1f}%)")
+    
+    return {
+        'train_mae': train_mae, 'test_mae': test_mae,
+        'train_r2': train_r2, 'test_r2': test_r2,
+        'test_mape': test_mape
+    }
+
+
+def plot_simple_evaluation(y_test, y_pred_test, save_path=None):
+    """สร้าง 2 plots พื้นฐาน: Predicted vs Actual และ Residuals"""
+    
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    
+    # Plot 1: Predicted vs Actual
+    ax1 = axes[0]
+    ax1.scatter(y_test, y_pred_test, alpha=0.5, s=10)
+    min_val = min(y_test.min(), y_pred_test.min())
+    max_val = max(y_test.max(), y_pred_test.max())
+    ax1.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2, label='Perfect Prediction')
+    ax1.set_xlabel('Actual Quantity Sold', fontsize=12)
+    ax1.set_ylabel('Predicted Quantity Sold', fontsize=12)
+    ax1.set_title('Predicted vs Actual', fontsize=14, fontweight='bold')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    r2 = r2_score(y_test, y_pred_test)
+    ax1.text(0.05, 0.95, f'R² = {r2:.4f}', transform=ax1.transAxes,
+             fontsize=12, verticalalignment='top',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    # Plot 2: Residuals
+    ax2 = axes[1]
+    residuals = y_test - y_pred_test
+    ax2.scatter(y_pred_test, residuals, alpha=0.5, s=10)
+    ax2.axhline(y=0, color='r', linestyle='--', lw=2)
+    ax2.set_xlabel('Predicted Quantity Sold', fontsize=12)
+    ax2.set_ylabel('Residuals (Actual - Predicted)', fontsize=12)
+    ax2.set_title('Residual Plot', fontsize=14, fontweight='bold')
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"✓ Plot saved: {save_path}")
+    
+    plt.show()
+
+
+def cross_validate_simple(model, X, y, cv=5):
+    """Cross-validation แบบง่าย"""
+    print("\n=== Cross-Validation (5-Fold) ===")
+    
+    mae_scores = -cross_val_score(model, X, y, cv=cv, scoring='neg_mean_absolute_error', n_jobs=-1)
+    r2_scores = cross_val_score(model, X, y, cv=cv, scoring='r2', n_jobs=-1)
+    
+    print(f"MAE: {mae_scores.mean():.4f} (+/- {mae_scores.std():.4f})")
+    print(f"R²:  {r2_scores.mean():.4f} (+/- {r2_scores.std():.4f})")
+    
+    if r2_scores.std() < 0.05:
+        print("✓ Model is stable (low variance)")
+    else:
+        print("⚠ Model has high variance across folds")
+
+
+# =============================================================================
+# 1-6. DATA LOADING & PROCESSING (เหมือนเดิม)
+# =============================================================================
 print("\n=== Loading Olist Data ===")
 try:
-    # (โค้ดจะหาไฟล์ในโฟลเดอร์เดียวกัน)
     df_orders = pd.read_csv('olist_orders_dataset.csv')
     df_items = pd.read_csv('olist_order_items_dataset.csv')
     df_products = pd.read_csv('olist_products_dataset.csv')
     df_trans = pd.read_csv('product_category_name_translation.csv')
     df_sellers = pd.read_csv('olist_sellers_dataset.csv')
-    print("Olist CSV files loaded successfully.")
-    # (อาจเพิ่มไฟล์อื่นถ้าต้องการ Feature เพิ่มเติม)
-    print("Olist CSV files loaded successfully.")
+    print("✓ Data loaded successfully")
 except FileNotFoundError as e:
-    print(f"Error: Could not load Olist CSV file - {e}")
-    print("Make sure Olist CSV files are in the same folder.")
+    print(f"✗ Error: {e}")
     exit()
 
-# --- 4. MERGE & PREPARE DATA ---
-print("\nMerging and Preparing Olist data...")
-# เลือกเฉพาะ Order ที่เสร็จสมบูรณ์
+print("\n=== Processing Data ===")
+start_time = time.time()
+
 df_orders = df_orders[df_orders['order_status'] == 'delivered'].copy()
-# แปลงเป็น datetime
 df_orders['order_purchase_timestamp'] = pd.to_datetime(df_orders['order_purchase_timestamp'])
 
-# Merge orders with items
 df = pd.merge(df_orders, df_items, on='order_id', how='inner')
-
-# Merge with products and translation
 df = pd.merge(df, df_products, on='product_id', how='left')
 df = pd.merge(df, df_trans, on='product_category_name', how='left')
+df = pd.merge(df, df_sellers[['seller_id', 'seller_state']], on='seller_id', how='left')
 
-df_merged = pd.merge(df_orders, df_items, on='order_id', how='inner')
-df_merged = pd.merge(df_merged, df_products, on='product_id', how='left')
-df_merged = pd.merge(df_merged, df_trans, on='product_category_name', how='left')
-df_merged = pd.merge(df_merged, df_sellers[['seller_id', 'seller_state']], on='seller_id', how='left')
-df_merged['seller_state'] = df_merged['seller_state'].fillna('Unknown')
+df['seller_state'] = df['seller_state'].fillna('Unknown')
 le_state = LabelEncoder()
-df_merged['seller_state_encoded'] = le_state.fit_transform(df_merged['seller_state'])
-df = df_merged.copy()
+df['seller_state_encoded'] = le_state.fit_transform(df['seller_state'])
 
-# เลือกคอลัมน์ที่จำเป็น + สร้าง Quantity (order_item_id คือ ลำดับ item ใน order ไม่ใช่ quantity)
-df['quantity'] = 1 # Assume each row in order_items is 1 unit sold for simplicity
+df['quantity'] = 1
 df_agg = df[[
-    'order_purchase_timestamp',
-    'product_id',
-    'product_category_name_english',
-    'seller_state_encoded',
-    'price', # ราคาขายต่อหน่วย
-    'quantity', # สร้างคอลัมน์ quantity
-    'product_weight_g',
-    'product_length_cm',
-    'product_height_cm',
-    'product_width_cm'
+    'order_purchase_timestamp', 'product_id', 'product_category_name_english',
+    'seller_state_encoded', 'price', 'quantity',
+    'product_weight_g', 'product_length_cm', 'product_height_cm', 'product_width_cm'
 ]].copy()
 
-# Drop rows with missing category (optional, but simplifies)
 df_agg.dropna(subset=['product_category_name_english'], inplace=True)
+print(f"✓ Initial records: {len(df_agg):,}")
 
-print(f"Initial transaction records: {len(df_agg)}")
-
-# --- 5. AGGREGATE TO WEEKLY PER PRODUCT ---
-print("\nAggregating data to weekly per product...")
+print("\n=== Aggregating to Weekly ===")
 df_agg['Date'] = df_agg['order_purchase_timestamp']
 df_agg = df_agg.set_index('Date')
 
-# รวมยอดขายและคำนวณราคาเฉลี่ย รายสัปดาห์ ต่อ Product
-weekly_data = df_agg.groupby(['product_id', 'product_category_name_english', 'seller_state_encoded', pd.Grouper(freq='W-MON')]).agg(
-    QuantitySold=('quantity', 'count'), # ใช้ count เพราะเราสมมติว่า 1 แถว = 1 ชิ้น
+weekly_data = df_agg.groupby([
+    'product_id', 'product_category_name_english', 'seller_state_encoded',
+    pd.Grouper(freq='W-MON')
+]).agg(
+    QuantitySold=('quantity', 'count'),
     AverageSellingPrice=('price', 'mean'),
     Weight_g_Mean=('product_weight_g', 'mean'),
     Length_cm_Mean=('product_length_cm', 'mean'),
@@ -99,485 +202,250 @@ weekly_data = df_agg.groupby(['product_id', 'product_category_name_english', 'se
     Width_cm_Mean=('product_width_cm', 'mean')
 ).reset_index()
 
-# เติม 0 สำหรับสัปดาห์ที่ไม่มีการขาย (สำคัญ!)
-# 1. หา Product ทั้งหมด และ Date range ทั้งหมด
-all_products = weekly_data[['product_id', 'product_category_name_english']].drop_duplicates()
-min_date = weekly_data['Date'].min()
-max_date = weekly_data['Date'].max()
-# สร้าง Date range รายสัปดาห์ (W-MON)
-all_weeks = pd.date_range(start=min_date, end=max_date, freq='W-MON')
+print(f"✓ Weekly records (raw): {len(weekly_data):,}")
 
-# 2. สร้าง DataFrame กรอบเต็ม (Cartesian product)
-full_index = pd.MultiIndex.from_product([all_products['product_id'].unique(), all_weeks], names=['product_id', 'Date'])
-df_full = pd.DataFrame(index=full_index).reset_index()
+print("\n=== Filtering Popular Products ===")
+product_sales = weekly_data.groupby('product_id')['QuantitySold'].sum().sort_values(ascending=False)
 
-# 3. Merge กรอบเต็มกับข้อมูลจริง และเติม 0
-weekly_data_filled = pd.merge(df_full, weekly_data, on=['product_id', 'Date'], how='left')
-# เติม Category กลับเข้าไป
-weekly_data_filled = pd.merge(weekly_data_filled, all_products, on='product_id', how='left', suffixes=('', '_y'))
-weekly_data_filled.drop(columns=['product_category_name_english_y'], inplace=True)
-# เติม 0 สำหรับ QuantitySold และอาจจะเติมราคาเฉลี่ยด้วย ffill/bfill หรือค่าเฉลี่ยรวม
-weekly_data_filled['QuantitySold'] = weekly_data_filled['QuantitySold'].fillna(0)
-weekly_data_filled['AverageSellingPrice'] = weekly_data_filled.groupby('product_id')['AverageSellingPrice'].ffill().bfill() # Forward/Backward fill price
-weekly_data_filled['AverageSellingPrice'] = weekly_data_filled['AverageSellingPrice'].fillna(weekly_data_filled['AverageSellingPrice'].mean()) # Fill remaining NaNs with global mean
-prod_features_to_fill = ['Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean']
-for col in prod_features_to_fill:
-    # 1. เติมค่าจากสัปดาห์ก่อนหน้า/ถัดไป ของ Product เดียวกัน
-    weekly_data_filled[col] = weekly_data_filled.groupby('product_id')[col].ffill().bfill()
-    # 2. หาก Product ไหนไม่มีข้อมูลนี้เลย (NaN ล้วน) ให้เติม 0
-    weekly_data_filled[col] = weekly_data_filled[col].fillna(0)
-df = weekly_data_filled.copy()
-print(f"Weekly aggregated records (filled): {len(df)}")
-print(f"Date range: {df['Date'].min()} to {df['Date'].max()}")
+if MIN_SALES_THRESHOLD:
+    popular_products = product_sales[product_sales >= MIN_SALES_THRESHOLD].index
+else:
+    popular_products = product_sales.head(TOP_N_PRODUCTS).index
 
-# --- 6. FEATURE ENGINEERING FOR OLIST (WEEKLY) ---
-print("\n=== Creating Olist Weekly Features ===")
+print(f"✓ Popular products: {len(popular_products):,}")
+
+weekly_data = weekly_data[weekly_data['product_id'].isin(popular_products)].copy()
+print(f"✓ Weekly records (filtered): {len(weekly_data):,}")
+
+df = weekly_data.copy()
+
+df['AverageSellingPrice'] = df.groupby('product_id')['AverageSellingPrice'].ffill().bfill()
+df['AverageSellingPrice'] = df['AverageSellingPrice'].fillna(df['AverageSellingPrice'].median())
+
+prod_features = ['Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean']
+for col in prod_features:
+    df[col] = df.groupby('product_id')[col].ffill().bfill()
+    df[col] = df[col].fillna(0)
+
+print(f"✓ Processing time: {time.time() - start_time:.1f}s")
+
+print("\n=== Feature Engineering ===")
 df = df.sort_values(by=['product_id', 'Date'])
 
-# 6.1 Encode Category
-print("Encoding categorical features (Category)...")
-encoders = {}
 le_cat = LabelEncoder()
-# แปลงเป็น category เพื่อลดหน่วยความจำ (ทางเลือก)
-# df['product_category_name_english'] = df['product_category_name_english'].astype('category')
 df['category_encoded'] = le_cat.fit_transform(df['product_category_name_english'])
-encoders['category'] = le_cat
-encoders['product_id'] = 'Numeric'
 
-# 6.2 Time features (ต้องมาก่อน เพื่อใช้ประกอบกับ holiday)
-print("Creating time features...")
 df['Year'] = df['Date'].dt.year
 df['Month'] = df['Date'].dt.month
-# เก็บ Week เป็น int ก่อน (เหมาะกับการ merge/groupby)
 df['Week'] = df['Date'].dt.isocalendar().week.astype(int)
-df['DayOfWeek'] = df['Date'].dt.dayofweek          # 0=Mon, 6=Sun
+df['DayOfWeek'] = df['Date'].dt.dayofweek
 df['IsWeekend'] = df['DayOfWeek'].isin([5, 6]).astype(int)
 df['Quarter'] = df['Date'].dt.quarter
 
-# 6.3 Holiday → สร้าง IsHolidayWeek จากปฏิทินจริง แล้ว merge ด้วย (Year, Week)
-print("Building holiday-week feature...")
-br_holidays = holidays.Brazil(
-    years=range(df['Date'].dt.year.min(), df['Date'].dt.year.max() + 1)
+print("  - Creating holiday features...")
+br_holidays = holidays.Brazil(years=range(df['Date'].dt.year.min(), df['Date'].dt.year.max() + 1))
+df['IsHoliday'] = df['Date'].apply(lambda d: 1 if d in br_holidays else 0)
+
+print("  - Creating lag & rolling features...")
+
+def create_lag_features(group, col, lags=IMPORTANT_LAGS):
+    for lag in lags:
+        group[f'{col}_Lag_{lag}'] = group[col].shift(lag)
+    return group
+
+def create_rolling_features(group, col, windows=IMPORTANT_ROLLS):
+    for window in windows:
+        group[f'{col}_Roll_Mean_{window}'] = group[col].rolling(window=window, min_periods=1).mean()
+    return group
+
+df = df.groupby('product_id', group_keys=False).apply(
+    lambda g: create_rolling_features(create_lag_features(g, 'AverageSellingPrice'), 'AverageSellingPrice')
 )
-holiday_df = pd.DataFrame({'hday': pd.to_datetime(list(br_holidays.keys()))})
-holiday_df['Year'] = holiday_df['hday'].dt.year
-holiday_df['Week'] = holiday_df['hday'].dt.isocalendar().week.astype(int)
-holiday_weeks = holiday_df[['Year', 'Week']].drop_duplicates()
-holiday_weeks['IsHolidayWeek'] = 1
+df = df.groupby('product_id', group_keys=False).apply(
+    lambda g: create_rolling_features(create_lag_features(g, 'QuantitySold'), 'QuantitySold')
+)
 
-df = df.merge(holiday_weeks, on=['Year', 'Week'], how='left')
-df['IsHolidayWeek'] = df['IsHolidayWeek'].fillna(0).astype(int)
+df['Price_Diff_Lag_1'] = df.groupby('product_id')['AverageSellingPrice'].diff()
+df['Qty_Diff_Lag_1'] = df.groupby('product_id')['QuantitySold'].diff()
 
-# 6.4 Cyclical time features (ค่อยแปลง Week → float สำหรับ sine/cos)
-df['Month_Sin'] = np.sin(2 * np.pi * df['Month']/12)
-df['Month_Cos'] = np.cos(2 * np.pi * df['Month']/12)
-df['Week'] = df['Week'].astype(float)
-df['Week_Sin']  = np.sin(2 * np.pi * df['Week']/52)
-df['Week_Cos']  = np.cos(2 * np.pi * df['Week']/52)
+df = df.fillna(0)
 
-# 6.5 Lag features (Demand & Price)
-print("Creating lag features...")
-df['Qty_Lag_1']  = df.groupby('product_id')['QuantitySold'].shift(1)
-df['Price_Lag_1'] = df.groupby('product_id')['AverageSellingPrice'].shift(1)
-df['Price_Diff_Lag_1'] = df['AverageSellingPrice'] - df['Price_Lag_1']
+print(f"✓ Total features: {len(df.columns)}")
+print(f"✓ Total records: {len(df):,}")
 
-df['Qty_Lag_2']  = df.groupby('product_id')['QuantitySold'].shift(2)
-df['Qty_Lag_3']  = df.groupby('product_id')['QuantitySold'].shift(3)
-df['Qty_Lag_4']  = df.groupby('product_id')['QuantitySold'].shift(4)
-df['Qty_Lag_8']  = df.groupby('product_id')['QuantitySold'].shift(8)
-df['Qty_Lag_52'] = df.groupby('product_id')['QuantitySold'].shift(52)
+# =============================================================================
+# PREPARE TRAIN/TEST
+# =============================================================================
+print("\n=== Preparing Train/Test Split ===")
 
-df['Price_Lag_2'] = df.groupby('product_id')['AverageSellingPrice'].shift(2)
-
-# 6.6 Rolling features
-print("Creating rolling mean/std/max features...")
-df['Qty_Roll_Mean_4']  = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4,  min_periods=1).mean()
-df['Price_Roll_Mean_4'] = df.groupby('product_id')['AverageSellingPrice'].shift(1).rolling(window=4,  min_periods=1).mean()
-
-df['Qty_Roll_Std_4']    = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4,  min_periods=1).std()
-df['Qty_Roll_Mean_12']  = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=12, min_periods=1).mean()
-
-df['Qty_Roll_Mean_8']   = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=8,  min_periods=1).mean()
-df['Qty_Roll_Std_8']    = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=8,  min_periods=1).std()
-df['Qty_Roll_Max_8']    = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=8,  min_periods=1).max()
-df['Price_Roll_Mean_8'] = df.groupby('product_id')['AverageSellingPrice'].shift(1).rolling(window=8,  min_periods=1).mean()
-
-df['Qty_Roll_Max_4']    = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=4,  min_periods=1).max()
-df['Qty_Roll_Max_12']   = df.groupby('product_id')['QuantitySold'].shift(1).rolling(window=12, min_periods=1).max()
-
-# 6.7 Inferred promotion features
-print("Creating inferred promotion features...")
-df['Discount_Pct_Approx'] = (df['Price_Roll_Mean_4'] - df['AverageSellingPrice']) / (df['Price_Roll_Mean_4'] + 1e-6)
-df['Is_Discounted_Approx'] = (df['Discount_Pct_Approx'] > 0.05).astype(int)
-
-# 6.8 Interaction features (ต้องมี seller_state_encoded ใน df)
-print("Creating interaction features...")
-df['Cat_x_Weekend'] = df['category_encoded'] * df['IsWeekend']
-df['PriceLag1_x_MonthSin'] = df['Price_Lag_1'].fillna(0) * df['Month_Sin']
-df['QtyLag1_x_SellerState'] = df['Qty_Lag_1'].fillna(0) * df['seller_state_encoded']
-
-# 6.9 Drop NaNs ที่เกิดจาก lag/rolling (รวมถึงฟีเจอร์ที่เพิ่มมา)
-print(f"Shape before dropping NaNs: {df.shape}")
-df = df.dropna(subset=[
-    'Qty_Lag_1', 'Price_Lag_1', 'Qty_Roll_Mean_4', 'Price_Roll_Mean_4',
-    'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12',
-    'Qty_Lag_3', 'Qty_Lag_4', 'Qty_Lag_8', 'Price_Lag_2',
-    'Qty_Roll_Mean_8', 'Qty_Roll_Std_8', 'Qty_Roll_Max_8', 'Price_Roll_Mean_8',
-    'Qty_Roll_Max_4', 'Qty_Roll_Max_12',
-    'Discount_Pct_Approx', 'Cat_x_Weekend', 'PriceLag1_x_MonthSin', 'QtyLag1_x_SellerState'
-])
-
-# 6.10 กรองสินค้าที่ volume ต่ำ (เพื่อโมเดลนิ่งขึ้น)
-print("Filtering out low-volume products...")
-total_sales_per_product = df.groupby('product_id')['QuantitySold'].transform('sum')
-df = df[total_sales_per_product > 5]   # ปรับ threshold ได้ เช่น 5, 10, 20
-print(f"Shape after filtering low-volume products: {df.shape}")
-print(f"Shape after dropping NaNs: {df.shape}")
-
-# --- 7. OLIST FEATURE LIST ---
-features = [
+feature_cols = [
     'category_encoded', 'seller_state_encoded',
-    # Time Features
-    'Year', 'Month', 'Week', 'Month_Sin', 'Month_Cos', 'Week_Sin', 'Week_Cos',
-    'DayOfWeek', 'IsWeekend', 'Quarter', 
-    # Price Features
-    'AverageSellingPrice', 'Price_Lag_1', 'Price_Diff_Lag_1', 'Price_Roll_Mean_4',
-    # Lag/Rolling Demand Features
-    'Qty_Lag_1', 'Qty_Roll_Mean_4',
-    'Qty_Lag_2', 'Qty_Lag_52', 'Qty_Roll_Std_4', 'Qty_Roll_Mean_12', 'Qty_Lag_3', 'Qty_Lag_4', 'Qty_Lag_8', 'Price_Lag_2', 'Qty_Roll_Mean_8', 'Qty_Roll_Std_8', 'Qty_Roll_Max_8', 'Price_Roll_Mean_8', 'Qty_Roll_Max_4', 'Qty_Roll_Max_12',
-    # Promotion Features (Inferred)
-    'Discount_Pct_Approx', 'Is_Discounted_Approx' ,
-    'Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean',
-    'Cat_x_Weekend', 'PriceLag1_x_MonthSin', 'QtyLag1_x_SellerState'
+    'AverageSellingPrice', 'Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean',
+    'Year', 'Month', 'Week', 'Quarter', 'IsWeekend', 'IsHoliday'
 ]
-# (คำนวณ NUM_FEATURES ใหม่)
-target = 'QuantitySold'
-NUM_FEATURES = len(features)
-print(f"\nTotal Olist weekly features: {NUM_FEATURES}")
-# --- 8. Time-based Train/Validation Split ---
-print("\n=== Time-based Train/Validation Split ===")
-df = df.sort_values(by=['Date'])
 
-total_weeks = df['Date'].nunique()
-train_weeks = int(total_weeks * 0.8) # ใช้ 80% Train
-split_date = df['Date'].unique()[train_weeks]
+for col in ['AverageSellingPrice', 'QuantitySold']:
+    for lag in IMPORTANT_LAGS:
+        feature_cols.append(f'{col}_Lag_{lag}')
+    for window in IMPORTANT_ROLLS:
+        feature_cols.append(f'{col}_Roll_Mean_{window}')
 
-print(f"Splitting data before date: {split_date}")
+feature_cols.extend(['Price_Diff_Lag_1', 'Qty_Diff_Lag_1'])
 
-df_train = df[df['Date'] < split_date].copy()
-df_val = df[df['Date'] >= split_date].copy() # ใช้ df_val เป็น Test Set
+X = df[feature_cols].values
+y = df['QuantitySold'].values
 
-print(f"Train period: {df_train['Date'].min()} to {df_train['Date'].max()}")
-print(f"Validation period: {df_val['Date'].min()} to {df_val['Date'].max()}")
+split_idx = int(len(df) * 0.8)
+X_train, X_test = X[:split_idx], X[split_idx:]
+y_train, y_test = y[:split_idx], y[split_idx:]
 
-if len(df_train) == 0 or len(df_val) == 0:
-    raise ValueError("Data splitting resulted in empty Train or Validation set.")
+print(f"✓ Train: {len(X_train):,} samples")
+print(f"✓ Test:  {len(X_test):,} samples")
 
-# --- 9. Fit Scaler ---
-print("\n=== Fitting Scaler on Train Set ONLY ===")
-X_train_raw = df_train[features].values
-y_train_target = df_train[target].values
-X_test_raw = df_val[features].values # ใช้ df_val
-y_test_raw = df_val[target].values   # ใช้ df_val
-
-# (แยก Scaler สำหรับ y ด้วย ถ้าต้องการ แต่ RF/Linear ไม่จำเป็น)
 scaler_X = StandardScaler()
-X_train_scaled = scaler_X.fit_transform(X_train_raw)
-X_test_scaled = scaler_X.transform(X_test_raw)
+X_train_scaled = scaler_X.fit_transform(X_train)
+X_test_scaled = scaler_X.transform(X_test)
 
-print(f"X_train shape (flat): {X_train_scaled.shape}")
-print(f"X_test shape (flat): {X_test_scaled.shape}")
+# =============================================================================
+# TRAIN MODEL
+# =============================================================================
+print("\n=== Training LightGBM Model ===")
+start_time = time.time()
 
-# --- 10. Build, Train, and Compare Models ---
-print("\n=== Training and Comparing Models (Olist) ===")
-models = {
-    "Linear Regression": LinearRegression(),
-    "Random Forest": RandomForestRegressor(
-        n_estimators=500,
-        min_samples_leaf=5, 
-        random_state=42,
-        n_jobs=-1,
-        verbose=0,
-        max_depth=20
-    ),
-    "Neural Network (MLP)": MLPRegressor(
-        hidden_layer_sizes=(100,50,25),
-        activation='relu',
-        random_state=42,
-        max_iter=500,
-        early_stopping=True,
-        n_iter_no_change=10,
-        verbose=True
-    ),
+model = LGBMRegressor(
+    n_estimators=100,
+    learning_rate=0.05,
+    max_depth=7,
+    num_leaves=31,
+    min_child_samples=20,
+    random_state=42,
+    n_jobs=-1,
+    verbose=-1
+)
 
-    "LightGBM": LGBMRegressor(
-        n_estimators=500,
-        learning_rate=0.01,
-        num_leaves=41,
-        n_jobs=-1,
-        random_state=42
+model.fit(X_train_scaled, y_train)
+train_time = time.time() - start_time
+
+y_pred_train = model.predict(X_train_scaled)
+y_pred_test = model.predict(X_test_scaled)
+
+print(f"✓ Training time: {train_time:.2f}s")
+
+# =============================================================================
+# เพิ่ม: MODEL EVALUATION
+# =============================================================================
+
+# 1. แสดง metrics แบบละเอียด
+metrics = evaluate_model(y_train, y_pred_train, y_test, y_pred_test)
+
+# 2. สร้าง plots
+print("\n=== Creating Evaluation Plots ===")
+plot_simple_evaluation(y_test, y_pred_test, 
+                       save_path='/mnt/user-data/outputs/model_evaluation.png')
+
+# 3. Cross-validation
+print("\nRunning cross-validation on sample...")
+sample_size = min(10000, len(X_train_scaled))
+sample_idx = np.random.choice(len(X_train_scaled), sample_size, replace=False)
+cross_validate_simple(model, X_train_scaled[sample_idx], y_train[sample_idx], cv=3)
+
+# =============================================================================
+# PRICE OPTIMIZATION (เหมือนเดิม)
+# =============================================================================
+print("\n=== Price Optimization (Grid Search) ===")
+
+df_train = df.iloc[:split_idx].copy()
+df_test = df.iloc[split_idx:].copy()
+
+target_products = df_train.groupby('product_id')['QuantitySold'].sum().nlargest(NUM_PRODUCTS_TO_OPTIMIZE).index.values
+print(f"✓ Target products: {target_products}")
+
+base_data = df_train.groupby('product_id').last()
+
+price_stats = df_train[df_train['product_id'].isin(target_products)].groupby('product_id')['AverageSellingPrice'].agg(['mean', 'std'])
+print(f"\n✓ Price Statistics:")
+print(price_stats)
+
+
+def optimize_price_grid(model, prod_id, price_bounds, cost, scaler, feature_cols):
+    """หาราคาที่ดีที่สุดด้วย Grid Search"""
+    prices = np.linspace(price_bounds[0], price_bounds[1], PRICE_GRID_POINTS)
+    base_features = base_data.loc[prod_id][feature_cols].values
+    
+    best_price = None
+    best_profit = -np.inf
+    
+    for price in prices:
+        features_unscaled = base_features.copy()
+        
+        price_idx = feature_cols.index('AverageSellingPrice')
+        features_unscaled[price_idx] = price
+        
+        if 'AverageSellingPrice_Lag_1' in feature_cols:
+            lag_idx = feature_cols.index('AverageSellingPrice_Lag_1')
+            features_unscaled[lag_idx] = base_features[price_idx]
+        
+        features_scaled = scaler.transform(features_unscaled.reshape(1, -1))
+        predicted_qty = model.predict(features_scaled)[0]
+        predicted_qty = max(0, round(predicted_qty))
+        
+        profit = (price - cost) * predicted_qty
+        
+        if profit > best_profit:
+            best_profit = profit
+            best_price = price
+    
+    return best_price, best_profit
+
+
+print("\n" + "="*60)
+optimization_results = {}
+
+for i, prod_id in enumerate(target_products):
+    print(f"\nOptimizing Product {i+1}/{len(target_products)}: {prod_id}")
+    
+    mean_price = price_stats.loc[prod_id, 'mean']
+    price_bounds = (mean_price * 0.7, mean_price * 1.3)
+    cost = PRODUCT_COSTS[i]
+    
+    print(f"  Current avg price: ฿{mean_price:.2f}")
+    print(f"  Price range: ฿{price_bounds[0]:.2f} - ฿{price_bounds[1]:.2f}")
+    print(f"  Cost: ฿{cost:.2f}")
+    
+    start_time = time.time()
+    optimal_price, max_profit = optimize_price_grid(
+        model, prod_id, price_bounds, cost, scaler_X, feature_cols
     )
-}
+    opt_time = time.time() - start_time
+    
+    optimization_results[prod_id] = {
+        'optimal_price': optimal_price,
+        'max_profit': max_profit,
+        'current_price': mean_price,
+        'time': opt_time
+    }
+    
+    print(f"  ✓ Optimal price: ฿{optimal_price:.2f}")
+    print(f"  ✓ Expected profit: ฿{max_profit:,.2f}")
+    print(f"  ✓ Optimization time: {opt_time:.3f}s")
 
-results = {}
-best_model_name = None
-best_r2 = -np.inf
+# =============================================================================
+# SUMMARY
+# =============================================================================
+print("\n" + "="*60)
+print("OPTIMIZATION SUMMARY")
+print("="*60)
 
-print(f"\nValidation Set Performance (Actual Mean: {y_test_raw.mean():.2f} units)")
-print("-" * 50)
+total_profit = 0
+for prod_id, result in optimization_results.items():
+    print(f"\nProduct {prod_id}:")
+    print(f"  Current Price: ฿{result['current_price']:.2f}")
+    print(f"  Optimal Price: ฿{result['optimal_price']:.2f} ({result['optimal_price']/result['current_price']*100-100:+.1f}%)")
+    print(f"  Expected Profit: ฿{result['max_profit']:,.2f}")
+    total_profit += result['max_profit']
 
-for name, model in models.items():
-    print(f"Training: {name}...")
-    model.fit(X_train_scaled, y_train_target)
-    predictions_raw = model.predict(X_test_scaled)
-    # ทำให้ค่าพยากรณ์ไม่ติดลบ และเป็นจำนวนเต็ม (สำหรับ Demand)
-    predictions_raw = np.maximum(0, predictions_raw)
-    predictions_raw = np.round(predictions_raw)
+print(f"\n{'='*60}")
+print(f"TOTAL EXPECTED PROFIT: ฿{total_profit:,.2f}")
+print(f"{'='*60}")
 
-
-    r2 = r2_score(y_test_raw, predictions_raw)
-    mae = mean_absolute_error(y_test_raw, predictions_raw)
-    rmse = np.sqrt(mean_squared_error(y_test_raw, predictions_raw))
-
-    results[name] = {'R²': r2, 'MAE': mae, 'RMSE': rmse, 'model_obj': model, 'preds': predictions_raw}
-
-    print(f"Finished Training: {name}")
-    print(f"  R²:   {r2:.4f}")
-    print(f"  MAE:  {mae:.2f} units")
-    print(f"  RMSE: {rmse:.2f} units")
-    print("-" * 50)
-
-    if r2 > best_r2:
-        best_r2 = r2
-        best_model_name = name
-
-print(f"\n🏆 Best Model on Validation Set: {best_model_name} (Based on R²) 🏆")
-
-# --- 11. Visualization (Plotting the BEST model on Validation Set) ---
-print("\nGenerating visualization...")
-best_model_preds = results[best_model_name]['preds']
-plt.figure(figsize=(10, 5))
-plt.subplot(1, 2, 1)
-# สุ่มข้อมูลมาพล็อตบางส่วน ถ้าข้อมูลเยอะเกินไป
-plot_indices = np.random.choice(len(y_test_raw), size=min(5000, len(y_test_raw)), replace=False)
-plt.scatter(y_test_raw[plot_indices], best_model_preds[plot_indices], alpha=0.1)
-plt.plot([y_test_raw.min(), y_test_raw.max()],
-         [y_test_raw.min(), y_test_raw.max()], 'r--', lw=2)
-plt.xlabel('Actual Quantity Sold')
-plt.ylabel('Predicted Quantity Sold')
-plt.title(f'Actual vs Predicted ({best_model_name})\nValidation Set (R²={results[best_model_name]["R²"]:.4f})')
-plt.grid(True)
-plt.subplot(1, 2, 2)
-residuals = y_test_raw - best_model_preds
-res_min, res_max = residuals.min(), residuals.max()
-bins = np.linspace(res_min, res_max, 100)
-plt.hist(residuals, bins=bins, edgecolor='black')
-plt.xlabel('Residual')
-plt.ylabel('Frequency')
-plt.title(f'Residual Distribution ({best_model_name})')
-plt.grid(True)
-plt.tight_layout()
-plt.savefig(f'model_evaluation_olist_COMPARISON.png', dpi=150)
-print(f"\nVisualization for best model ({best_model_name}) saved to: model_evaluation_olist_COMPARISON.png")
-
-
-# --- 12. PRICE OPTIMIZATION SETUP ---
-if PSO_ENABLED:
-    print("\n" + "="*50)
-    print("=== Price Optimization (ACTIVATED for Olist) ===")
-    print("="*50)
-
-    # 1. เลือกสินค้าเป้าหมาย (Top 3 จาก Train Set)
-    # (เราต้องหา product_id ที่ถูกเข้ารหัสแล้ว ถ้ามีการเข้ารหัส)
-    # (ในกรณีนี้ product_id เป็นตัวเลขอยู่แล้ว ใช้ได้เลย)
-    product_sales_train = df_train.groupby('product_id')['QuantitySold'].sum()
-    top_products_in_train = product_sales_train.nlargest(3).index.values
-
-    target_products = top_products_in_train
-    print(f"Optimizing for Top 3 Product IDs from Train Set: {target_products}")
-
-    # !! ต้องกำหนดต้นทุนเอง !! (ใช้ค่าสมมติ)
-    # คุณต้องหาต้นทุนจริงของ Product IDs เหล่านี้มาใส่แทน
-    PRODUCT_COSTS = np.array([10, 20, 30])
-    if len(PRODUCT_COSTS) != len(target_products):
-        print("Warning: PRODUCT_COSTS length doesn't match target_products. Using placeholder costs.")
-        PRODUCT_COSTS = np.array([10] * len(target_products)) # Placeholder
-
-    NUM_PRODUCTS = len(target_products)
-
-    # 2. ดึง "ข้อมูลฐาน" (สัปดาห์ล่าสุดของ Train Set เพื่อใช้ทำนาย Validation Set)
-    # (เราจะใช้ข้อมูลดิบ Unscaled ของสัปดาห์สุดท้ายใน Train Set)
-    last_train_date = df_train['Date'].max()
-    # หาข้อมูลของสัปดาห์สุดท้ายสำหรับสินค้าเป้าหมาย
-    base_data = df_train[(df_train['Date'] == last_train_date) & (df_train['product_id'].isin(target_products))]
-    if len(base_data) < NUM_PRODUCTS:
-        print("Warning: Could not find base data for all target products in the last training week. Using latest available data.")
-        # หาข้อมูลล่าสุดของแต่ละ product แทน
-        base_data = df_train[df_train['product_id'].isin(target_products)].sort_values('Date').groupby('product_id').last()
-
-    if len(base_data) == 0:
-         print("Error: Could not find any base data for target products. Skipping PSO.")
-         target_products = None # Skip PSO loop
-    else:
-        # ทำให้แน่ใจว่า base_features_unscaled มี NUM_PRODUCTS แถว
-        base_features_unscaled_dict = {}
-        for prod_id in target_products:
-             if prod_id in base_data.index: # กรณี groupby().last()
-                 base_features_unscaled_dict[prod_id] = base_data.loc[prod_id][features].values
-             elif prod_id in base_data['product_id'].values: # กรณี filter date ตรงๆ
-                 base_features_unscaled_dict[prod_id] = base_data[base_data['product_id'] == prod_id][features].iloc[0].values
-             else:
-                 print(f"Error: Missing base data for product {prod_id}")
-                 # อาจจะต้องใช้ค่าเฉลี่ย หรือข้อมูลก่อนหน้า
-                 # tạm thời bỏ qua sản phẩm này
-                 # target_products = np.delete(target_products, np.where(target_products == prod_id))
-                 # NUM_PRODUCTS -= 1
-                 # TODO: Handle missing base data more robustly
-                 print("Using global average as placeholder - THIS IS NOT ACCURATE")
-                 base_features_unscaled_dict[prod_id] = df_train[features].mean().values # ใช้ค่าเฉลี่ยแทน (ไม่แม่นยำ!)
-
-
-    f_map = {name: idx for idx, name in enumerate(features)}
-
-    # 3. Price Bounds (ต้องปรับให้เหมาะกับราคา Olist)
-    # ลองดูช่วงราคาของ Top Products ใน Train set
-    price_stats = df_train[df_train['product_id'].isin(target_products)].groupby('product_id')['AverageSellingPrice'].agg(['min', 'max', 'mean'])
-    print("\nPrice stats for target products (Train Set):")
-    print(price_stats)
-
-    # กำหนด Bounds คร่าวๆ (ควรปรับตามข้อมูลจริง)
-    # ตัวอย่าง: ให้ช่วง +/- 30% จากราคาเฉลี่ย
-    price_bounds = []
-    for prod_id in target_products:
-        if prod_id in price_stats.index:
-            mean_price = price_stats.loc[prod_id, 'mean']
-            lower_bound = max(0.1, mean_price * 0.7) # ต่ำสุด 70%
-            upper_bound = mean_price * 1.3        # สูงสุด 130%
-            price_bounds.append((lower_bound, upper_bound))
-        else:
-             print(f"Warning: Missing price stats for product {prod_id}. Using default bounds (5-500).")
-             price_bounds.append((5, 500)) # Default กว้างๆ
-
-    print(f"\nUsing Price Bounds: {price_bounds}")
-
-
-    # 4. สร้าง Objective Function
-    def profit_objective_function(prices, model_to_use, current_product_index):
-        """
-        ฟังก์ชันคำนวณกำไร (สำหรับ Olist)
-        """
-        prod_id_to_optimize = target_products[current_product_index]
-        new_price = prices[0] # PSO จะ optimize ทีละราคา
-
-        # 1. ดึงข้อมูลฐานของ product นี้
-        if prod_id_to_optimize not in base_features_unscaled_dict:
-             print(f"Error in objective: Missing base data for product {prod_id_to_optimize}")
-             return 0 # Return neutral profit (or high cost)
-
-        future_features_unscaled = base_features_unscaled_dict[prod_id_to_optimize].copy()
-
-        # 2. อัปเดตราคาและ features ที่เกี่ยวข้อง
-        # Feature 'AverageSellingPrice' คือราคาที่เราจะ optimize
-        future_features_unscaled[f_map['AverageSellingPrice']] = new_price
-
-        # อัปเดต Lag/Diff/Roll ที่ขึ้นกับ Price ปัจจุบัน
-        # (Lag_1 คือ ราคาของ 'วันนี้' ซึ่งคือ base_features_unscaled)
-        today_price = base_features_unscaled_dict[prod_id_to_optimize][f_map['AverageSellingPrice']]
-        future_features_unscaled[f_map['Price_Lag_1']] = today_price
-        future_features_unscaled[f_map['Price_Diff_Lag_1']] = new_price - today_price
-
-        # Recalculate Price_Roll_Mean_4 including the new price prediction
-        # This requires historical prices, which might be complex here.
-        # Simplification: Assume Rolling Mean doesn't change drastically in one step OR use the last known rolling mean.
-        # Using last known rolling mean from base data:
-        future_features_unscaled[f_map['Price_Roll_Mean_4']] = base_features_unscaled_dict[prod_id_to_optimize][f_map['Price_Roll_Mean_4']]
-        # TODO: A more accurate approach would involve simulating the rolling mean update.
-
-        # อัปเดต Lag/Roll ของ Qty (ใช้ค่าจาก Base data เพราะเรายังไม่รู้ Qty ของสัปดาห์หน้า)
-        # --- !! แก้ไข (FIXED) !! --- ดึง 'QuantitySold' จาก base_data ไม่ใช่ f_map
-        last_quantity_sold = 0 # ตั้งค่าเริ่มต้นเป็น 0
-
-        if prod_id_to_optimize in base_data.index:
-            # กรณีที่ 1: Fallback (groupby().last()) ทำงาน -> index คือ product_id
-            last_quantity_sold = base_data.loc[prod_id_to_optimize]['QuantitySold']
-        
-        elif 'product_id' in base_data.columns and prod_id_to_optimize in base_data['product_id'].values:
-            # กรณีที่ 2: หาสัปดาห์สุดท้ายเจอ (filter by date) -> index คือตัวเลขปกติ
-            # เราต้องค้นหาจากคอลัมน์ 'product_id' แทน
-            last_quantity_sold = base_data[base_data['product_id'] == prod_id_to_optimize]['QuantitySold'].iloc[0]
-        
-        else:
-            # กรณีที่ 3: หาไม่เจอจริงๆ (ซึ่งไม่ควรเกิดถ้าเป็น Top 3)
-            print(f"Warning: Cannot find base QuantitySold for {prod_id_to_optimize}, using 0 for Qty_Lag_1.")
-            # last_quantity_sold จะยังคงเป็น 0
-
-        future_features_unscaled[f_map['Qty_Lag_1']] = last_quantity_sold
-        future_features_unscaled[f_map['Qty_Roll_Mean_4']] = base_features_unscaled_dict[prod_id_to_optimize][f_map['Qty_Roll_Mean_4']]
-        model_input_scaled_array = scaler_X.transform(future_features_unscaled.reshape(1, -1))
-        
-
-        # 4. Predict Demand
-        if isinstance(model_to_use, LGBMRegressor):
-            # ถ้าเป็น LGBM, ส่ง DataFrame (ที่มีชื่อ)
-            model_input_scaled_df = pd.DataFrame(model_input_scaled_array, columns=features)
-            predicted_qty = model_to_use.predict(model_input_scaled_df)[0]
-        else:
-            # ถ้าเป็นโมเดลอื่น (RF, LR, MLP), ส่ง NumPy Array (ที่ไม่มีชื่อ)
-            predicted_qty = model_to_use.predict(model_input_scaled_array)[0]
-        predicted_qty = max(0, round(predicted_qty)) # ทำให้ไม่ติดลบและเป็นจำนวนเต็ม
-
-        # 5. คำนวณกำไร
-        cost = PRODUCT_COSTS[current_product_index]
-        profit = (new_price - cost) * predicted_qty
-
-        return -profit  # ติดลบเพราะ PSO minimize
-
-    # --- 13. RUN OPTIMIZER FOR ALL 3 MODELS ---
-    if target_products is not None and NUM_PRODUCTS > 0:
-        optimization_summary = {}
-
-        for model_name, data in results.items():
-            print(f"\n--- Optimizing Prices using: {model_name} (R²: {data['R²']:.4f}) ---")
-            current_model = data['model_obj']
-            all_optimal_prices = []
-            total_max_profit = 0
-
-            for i in range(NUM_PRODUCTS):
-                prod_id = target_products[i]
-                print(f"Optimizing for Product ID: {prod_id}...")
-
-                # สร้าง wrapper ที่ส่ง index ปัจจุบันเข้าไปด้วย
-                objective_wrapper = functools.partial(profit_objective_function, model_to_use=current_model, current_product_index=i)
-
-                # PSO สำหรับสินค้าตัวเดียว (ต้องปรับ bounds)
-                optimizer = ParticleSwarmOptimizer(
-                    objective_function=objective_wrapper,
-                    bounds=[price_bounds[i]], # ส่ง bounds แค่ตัวเดียว
-                    num_particles= 30, 
-                    max_iter=50 ,     
-                    verbose=False
-                )
-
-                optimal_price_array, max_profit_single = optimizer.optimize()
-                optimal_price = optimal_price_array[0] # ผลลัพธ์เป็น array
-                max_profit = max_profit_single # แปลงกลับเป็นบวก
-
-                all_optimal_prices.append(optimal_price)
-                total_max_profit += max_profit
-
-                print(f"  Optimal Price for Product {prod_id}: {optimal_price:.2f}, Max Profit: {max_profit:,.2f}")
-
-            optimization_summary[model_name] = {'OptimalPrices': all_optimal_prices, 'TotalMaxProfit': total_max_profit}
-
-            print(f"\n{'='*50}")
-            print(f"OPTIMIZATION SUMMARY (For {model_name}):")
-            print(f"{'='*50}")
-            print(f"  Optimal Prices: {np.round(all_optimal_prices, 2)}")
-            print(f"  Total Maximum Profit: ฿{total_max_profit:,.2f}")
-            print(f"{'='*50}")
-
-else:
-    print("\nPrice Optimization skipped due to previous errors.")
-
-
-print("\nScript finished.")
+print("\n✓ Script finished successfully!")
