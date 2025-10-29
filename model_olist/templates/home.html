@@ -387,10 +387,10 @@
                     <div class="metric-label">Total Sales (units)</div>
                     <div class="metric-change positive" id="salesChange">--</div>
                 </div>
-                <div class="card metric-card">
+                <!-- <div class="card metric-card">
                     <div class="metric-value" id="modelAccuracy">Loading...</div>
                     <div class="metric-label">Model R² Score</div>
-                </div>
+                </div> -->
             </div>
 
             <div class="grid grid-2">
@@ -640,7 +640,7 @@
                 document.getElementById('totalRevenueBRL').textContent = formatBRL(metrics.total_revenue_brl);
                 document.getElementById('totalRevenueTHB').textContent = formatTHB(metrics.total_revenue_thb);
                 document.getElementById('totalSales').textContent = formatNumber(metrics.total_sales);
-                document.getElementById('modelAccuracy').textContent = metrics.model_accuracy.toFixed(3);
+                // document.getElementById('modelAccuracy').textContent = metrics.model_accuracy.toFixed(3);
                 document.getElementById('revenueChange').textContent = `${metrics.revenue_change > 0 ? '+' : ''}${metrics.revenue_change.toFixed(1)}%`;
                 document.getElementById('salesChange').textContent = `${metrics.sales_change > 0 ? '+' : ''}${metrics.sales_change.toFixed(1)}%`;
                 
