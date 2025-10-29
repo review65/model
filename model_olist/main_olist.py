@@ -22,14 +22,13 @@ warnings.filterwarnings('ignore')
 os.environ['PYTHONWARNINGS'] = 'ignore'
 
 # =============================================================================
-# CONFIGURATION - ปรับให้เทรนเฉพาะ Fashion Products (fashion_* only)
+# CONFIGURATION Fashion Products
 # =============================================================================
-MIN_SALES_THRESHOLD = 10  # ยอดขายขั้นต่ำต่อสินค้า
+MIN_SALES_THRESHOLD = 10  
 TOP_N_PRODUCTS = 500
-NUM_PRODUCTS_TO_OPTIMIZE = 5  # เพิ่มจาก 3 เป็น 5
-PRODUCT_COSTS = [10, 15, 20, 12, 18]  # เพิ่ม cost สำหรับสินค้าที่ 4-5
+NUM_PRODUCTS_TO_OPTIMIZE = 5 
+PRODUCT_COSTS = [10, 15, 20, 12, 18] 
 
-# Fashion categories - only fashion_* categories
 def is_fashion_category(category_name):
     """ตรวจสอบว่าหมวดหมู่เป็น fashion หรือไม่ (เฉพาะที่ขึ้นต้นด้วย fashion_)"""
     if pd.isna(category_name):
