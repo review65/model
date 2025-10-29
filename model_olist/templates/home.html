@@ -364,7 +364,7 @@
                 <span class="currency-badge">R$ BRL</span>
                 <span class="currency-badge" style="background: #6366f1;">฿ THB</span>
             </h1>
-            <p>ระบบวิเคราะห์และกำหนดราคาอัตโนมัติสำหรับ E-commerce ประเทศบราซิล</p>
+            <p>ระบบช่วยตัดสินใจและกำหนดราคาสำหรับ E-commerce ประเทศบราซิล</p>
         </div>
 
         <div class="nav-tabs">
@@ -374,7 +374,6 @@
             <button class="nav-tab" onclick="showTab('training')">🤖 Model Training</button>
         </div>
 
-        <!-- Dashboard Tab -->
         <div id="dashboard" class="tab-content active">
             <div class="grid grid-3">
                 <div class="card metric-card">
@@ -413,7 +412,6 @@
             </div>
         </div>
 
-        <!-- Category Analysis Tab -->
         <div id="products" class="tab-content">
             <div class="card">
                 <h3 class="card-title">🔍 Category Analysis</h3>
@@ -428,7 +426,6 @@
             </div>
         </div>
 
-        <!-- Price Optimization Tab -->
         <div id="optimization" class="tab-content">
             <div class="card">
                 <h3 class="card-title">💰 Price Optimization by Category</h3>
@@ -456,7 +453,6 @@
             </div>
         </div>
 
-        <!-- Model Training Tab -->
         <div id="training" class="tab-content">
             <div class="card">
                 <h3 class="card-title">Upload Data</h3>
@@ -902,25 +898,16 @@
                 const data = await res.json();
                 
                 if (res.ok) {
+                    
+                    // --- (การเปลี่ยนแปลง) ---
+                    // เราจะเปลี่ยนส่วนนี้
                     document.getElementById('trainingResult').innerHTML = `
                         <div class="card" style="margin-top: 20px; background: #f0fdf4; border-color: #86efac;">
                             <h3>✅ Training Complete!</h3>
-                            <div class="grid grid-2">
-                                <div>
-                                    <p><strong>Training Time:</strong> ${data.training_time}s</p>
-                                    <p><strong>Data Size:</strong> ${formatNumber(data.data_size)} rows</p>
-                                    <p><strong>Products:</strong> ${formatNumber(data.num_products)}</p>
-                                    <p><strong>Categories:</strong> ${data.num_categories}</p>
-                                </div>
-                                <div>
-                                    <p><strong>Train R²:</strong> ${data.metrics.train_r2}</p>
-                                    <p><strong>Test R²:</strong> ${data.metrics.test_r2}</p>
-                                    <p><strong>Test MAE:</strong> ${data.metrics.test_mae}</p>
-                                    <p><strong>Test MAPE:</strong> ${data.metrics.test_mape}%</p>
-                                </div>
+                            
                             </div>
-                        </div>
                     `;
+                    // --- (สิ้นสุดการเปลี่ยนแปลง) ---
                     
                     showToast('Model trained successfully!', 'success');
                     

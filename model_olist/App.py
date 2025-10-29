@@ -16,6 +16,18 @@ os.environ['PYTHONWARNINGS'] = 'ignore'
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from lightgbm import LGBMRegressor
+
+# --- (การเปลี่ยนแปลงที่ 1) ---
+# เพิ่มการนำเข้า XGBoost
+try:
+    from xgboost import XGBRegressor
+    _HAS_XGB = True
+    print("✓ XGBoost imported successfully.")
+except ImportError:
+    print("⚠ XGBoost not found. Please install it: pip install xgboost")
+    _HAS_XGB = False
+# --- (สิ้นสุดการเปลี่ยนแปลง) ---
+
 import matplotlib
 matplotlib.use('Agg')  # Non-GUI backend
 import matplotlib.pyplot as plt
@@ -65,11 +77,24 @@ def home():
 def get_dashboard_metrics():
     """Get main dashboard metrics"""
     try:
-        global weekly_data, model
+        global weekly_data, model, df_test
         
         if weekly_data is None:
             return jsonify({'error': 'No data loaded'}), 400
         
+        # คำนวณ R2 score ถ้าโมเดลมีอยู่
+        model_accuracy = 0.0
+        if model and df_test is not None:
+            try:
+                X_test = df_test[feature_cols].values
+                y_test = df_test['QuantitySold'].values
+                X_test_scaled = scaler.transform(X_test)
+                y_pred_test = model.predict(X_test_scaled)
+                model_accuracy = r2_score(y_test, y_pred_test)
+            except Exception as e:
+                print(f"Error calculating R2: {e}")
+                model_accuracy = 0.0 # fallback
+
         # Calculate metrics
         total_revenue_brl = (weekly_data['QuantitySold'] * weekly_data['AverageSellingPrice']).sum()
         total_revenue_thb = total_revenue_brl * BRL_TO_THB
@@ -80,14 +105,18 @@ def get_dashboard_metrics():
         
         # Calculate changes (compare last 4 weeks vs previous 4 weeks)
         recent_data = weekly_data.sort_values('Date').tail(8)
-        recent_4 = recent_data.tail(4)
-        prev_4 = recent_data.head(4)
-        
-        revenue_change = ((recent_4['QuantitySold'] * recent_4['AverageSellingPrice']).sum() / 
-                         (prev_4['QuantitySold'] * prev_4['AverageSellingPrice']).sum() - 1) * 100
-        
-        sales_change = (recent_4['QuantitySold'].sum() / prev_4['QuantitySold'].sum() - 1) * 100
-        
+        if len(recent_data) == 8:
+            recent_4 = recent_data.tail(4)
+            prev_4 = recent_data.head(4)
+            
+            revenue_change = ((recent_4['QuantitySold'] * recent_4['AverageSellingPrice']).sum() / 
+                             ((prev_4['QuantitySold'] * prev_4['AverageSellingPrice']).sum() + 1e-6) - 1) * 100
+            
+            sales_change = (recent_4['QuantitySold'].sum() / (prev_4['QuantitySold'].sum() + 1e-6) - 1) * 100
+        else:
+            revenue_change = 0
+            sales_change = 0
+
         metrics = {
             'total_revenue_brl': round(total_revenue_brl, 2),
             'total_revenue_thb': round(total_revenue_thb, 2),
@@ -97,7 +126,7 @@ def get_dashboard_metrics():
             'total_sales': int(total_sales),
             'revenue_change': round(revenue_change, 1),
             'sales_change': round(sales_change, 1),
-            'model_accuracy': round(0.83, 3) if model else 0.0,
+            'model_accuracy': round(model_accuracy, 3) if model_accuracy > 0 else 0.0,
             'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
         
@@ -380,17 +409,17 @@ def optimize_category_price():
             'current_price_thb': round(current_price_brl * BRL_TO_THB, 2),
             'optimal_price_brl': round(optimal_price_brl, 2),
             'optimal_price_thb': round(optimal_price_brl * BRL_TO_THB, 2),
-            'price_change_pct': round((optimal_price_brl / current_price_brl - 1) * 100, 1),
+            'price_change_pct': round((optimal_price_brl / (current_price_brl + 1e-6) - 1) * 100, 1),
             'current_demand': current_demand,
             'expected_demand': expected_demand,
-            'demand_change_pct': round((expected_demand / current_demand - 1) * 100, 1) if current_demand > 0 else 0,
+            'demand_change_pct': round((expected_demand / (current_demand + 1e-6) - 1) * 100, 1) if current_demand > 0 else 0,
             'current_profit_brl': round(current_profit_brl, 2),
             'current_profit_thb': round(current_profit_thb, 2),
             'expected_profit_brl': round(max_profit_brl, 2),
             'expected_profit_thb': round(max_profit_thb, 2),
             'profit_increase_brl': round(max_profit_brl - current_profit_brl, 2),
             'profit_increase_thb': round(max_profit_thb - current_profit_thb, 2),
-            'profit_increase_pct': round((max_profit_brl / current_profit_brl - 1) * 100, 1) if current_profit_brl > 0 else 0,
+            'profit_increase_pct': round((max_profit_brl / (current_profit_brl + 1e-6) - 1) * 100, 1) if current_profit_brl > 0 else 0,
             'optimization_curve': {
                 'prices_brl': [round(p, 2) for p in test_prices],
                 'prices_thb': [round(p * BRL_TO_THB, 2) for p in test_prices],
@@ -413,7 +442,7 @@ def optimize_category_price():
 
 def get_price_recommendation(optimal_price, current_price):
     """Generate price recommendation text"""
-    change_pct = (optimal_price / current_price - 1) * 100
+    change_pct = (optimal_price / (current_price + 1e-6) - 1) * 100
     
     if change_pct > 15:
         return f"แนะนำขึ้นราคา {change_pct:.1f}% (ทำทีละน้อย 5-10% ก่อน)"
@@ -545,15 +574,37 @@ def train_model():
         X_test_scaled = scaler.transform(X_test)
         
         # Train model
-        model = LGBMRegressor(
-            n_estimators=300,
-            learning_rate=0.05,
-            num_leaves=31,
-            max_depth=15,
-            random_state=42,
-            n_jobs=-1,
-            verbosity=-1
+        # --- (การเปลี่ยนแปลงที่ 2) ---
+        
+        if not _HAS_XGB:
+            return jsonify({'status': 'error', 'error': 'XGBoost library not found. Please install it with: pip install xgboost'}), 500
+
+        print("Training with best model: XGBoost...")
+        
+        # โมเดลใหม่ (XGBoost) อ้างอิงจาก main_olist.py
+        model = XGBRegressor(
+            n_estimators=300, 
+            learning_rate=0.05, 
+            max_depth=7,
+            subsample=0.8, 
+            colsample_bytree=0.8, 
+            reg_lambda=1.0,
+            random_state=42, 
+            n_jobs=-1
         )
+
+        # โมเดลเดิม (LGBM)
+        # model = LGBMRegressor(
+        #     n_estimators=300,
+        #     learning_rate=0.05,
+        #     num_leaves=31,
+        #     max_depth=15,
+        #     random_state=42,
+        #     n_jobs=-1,
+        #     verbosity=-1
+        # )
+        # --- (สิ้นสุดการเปลี่ยนแปลง) ---
+        
         
         model.fit(X_train_scaled, y_train)
         
@@ -565,7 +616,11 @@ def train_model():
         test_r2 = r2_score(y_test, y_pred_test)
         test_mae = mean_absolute_error(y_test, y_pred_test)
         test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
-        test_mape = np.mean(np.abs((y_test - y_pred_test) / (y_test + 1e-6))) * 100
+        
+        # เพิ่ม +1e-6 เพื่อป้องกันการหารด้วย 0
+        y_test_safe = y_test.copy()
+        y_test_safe[y_test_safe == 0] = 1e-6
+        test_mape = np.mean(np.abs((y_test - y_pred_test) / y_test_safe)) * 100
         
         # Save model
         with open(f'{MODEL_FOLDER}/model.pkl', 'wb') as f:
