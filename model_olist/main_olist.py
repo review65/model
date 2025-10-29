@@ -10,7 +10,7 @@ from sklearn.model_selection import cross_val_score
 from sklearn.ensemble import RandomForestRegressor
 import time, os
 
-# XGBoost (อาจยังไม่ติดตั้งบนเครื่อง)
+# XGBoost
 try:
     from xgboost import XGBRegressor
     _HAS_XGB = True
@@ -22,12 +22,22 @@ warnings.filterwarnings('ignore')
 os.environ['PYTHONWARNINGS'] = 'ignore'
 
 # =============================================================================
-# CONFIGURATION
+# CONFIGURATION - ปรับให้เทรนเฉพาะ Fashion Products
 # =============================================================================
-MIN_SALES_THRESHOLD = 10
+MIN_SALES_THRESHOLD = 10  # ยอดขายขั้นต่ำต่อสินค้า
 TOP_N_PRODUCTS = 500
-NUM_PRODUCTS_TO_OPTIMIZE = 3
-PRODUCT_COSTS = [10, 15, 20]
+NUM_PRODUCTS_TO_OPTIMIZE = 5  # เพิ่มจาก 3 เป็น 5
+PRODUCT_COSTS = [10, 15, 20, 12, 18]  # เพิ่ม cost สำหรับสินค้าที่ 4-5
+
+# Fashion categories ที่ต้องการวิเคราะห์
+FASHION_KEYWORDS = ['fashion', 'watches_gifts', 'cool_stuff']
+
+def is_fashion_category(category_name):
+    """ตรวจสอบว่าหมวดหมู่เป็น fashion หรือไม่"""
+    if pd.isna(category_name):
+        return False
+    category_lower = str(category_name).lower()
+    return any(keyword in category_lower for keyword in FASHION_KEYWORDS)
 
 IMPORTANT_LAGS = [1, 4]
 IMPORTANT_ROLLS = [4]
@@ -90,15 +100,9 @@ def evaluate_model(y_train, y_pred_train, y_test, y_pred_test):
         'test_mape': float(test_mape) if pd.notnull(test_mape) else np.nan
     }
 
-# --- (การเปลี่ยนแปลงที่ 1: อัปเดตฟังก์ชัน Plot) ---
 def plot_simple_evaluation(y_test, y_pred_test, model_name="Model", save_path=None):
-    """
-    Plots Predicted vs Actual and Residuals for a given model.
-    """
-    # เพิ่ม figsize=(14, 6) และ model_name
+    """Plots Predicted vs Actual and Residuals for a given model."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    
-    # เพิ่มหัวข้อหลักของ Figure
     fig.suptitle(f'Evaluation Plots for: {model_name}', fontsize=16, fontweight='bold')
 
     # กราฟที่ 1: Predicted vs Actual
@@ -127,15 +131,12 @@ def plot_simple_evaluation(y_test, y_pred_test, model_name="Model", save_path=No
     ax2.set_title('Residual Plot', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
 
-    # ปรับ layout เพื่อไม่ให้หัวข้อหลักทับซ้อน
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"✓ Plot saved: {save_path}")
     plt.show()
-# --- (สิ้นสุดการเปลี่ยนแปลงที่ 1) ---
-
 
 def cross_validate_simple(model, X, y, cv=5):
     print("\n=== Cross-Validation (5-Fold) ===")
@@ -171,6 +172,18 @@ df = pd.merge(df, df_products, on='product_id', how='left')
 df = pd.merge(df, df_trans, on='product_category_name', how='left')
 df = pd.merge(df, df_sellers[['seller_id', 'seller_state']], on='seller_id', how='left')
 
+# ===== กรองเฉพาะ Fashion Categories =====
+print("\n=== Filtering Fashion Products Only ===")
+print(f"Records before filtering: {len(df):,}")
+
+df = df[df['product_category_name_english'].apply(is_fashion_category)].copy()
+print(f"✓ Records after fashion filter: {len(df):,}")
+print(f"✓ Fashion categories found: {df['product_category_name_english'].nunique()}")
+print(f"✓ Fashion products found: {df['product_id'].nunique()}")
+print("\nTop 10 Fashion Categories:")
+print(df['product_category_name_english'].value_counts().head(10))
+
+# ===== ดำเนินการต่อ =====
 df['seller_state'] = df['seller_state'].fillna('Unknown')
 le_state = LabelEncoder()
 df['seller_state_encoded'] = le_state.fit_transform(df['seller_state'])
@@ -183,9 +196,9 @@ df_agg = df[[
 ]].copy()
 
 df_agg.dropna(subset=['product_category_name_english'], inplace=True)
-print(f"✓ Initial records: {len(df_agg):,}")
+print(f"✓ Records after cleanup: {len(df_agg):,}")
 
-print("\n=== Aggregating to Weekly ===")
+print("\n=== Aggregating to Weekly (Product-Level) ===")
 df_agg['Date'] = df_agg['order_purchase_timestamp']
 df_agg = df_agg.set_index('Date')
 
@@ -203,17 +216,26 @@ weekly_data = df_agg.groupby([
 
 print(f"✓ Weekly records (raw): {len(weekly_data):,}")
 
-print("\n=== Filtering Popular Products ===")
+print("\n=== Filtering Popular Fashion Products ===")
 product_sales = weekly_data.groupby('product_id')['QuantitySold'].sum().sort_values(ascending=False)
+
+# กรองตามยอดขายขั้นต่ำ หรือ top N
 if MIN_SALES_THRESHOLD:
     popular_products = product_sales[product_sales >= MIN_SALES_THRESHOLD].index
+    print(f"✓ Products with sales >= {MIN_SALES_THRESHOLD}: {len(popular_products):,}")
 else:
     popular_products = product_sales.head(TOP_N_PRODUCTS).index
-
-print(f"✓ Popular products: {len(popular_products):,}")
+    print(f"✓ Top {TOP_N_PRODUCTS} products: {len(popular_products):,}")
 
 weekly_data = weekly_data[weekly_data['product_id'].isin(popular_products)].copy()
 print(f"✓ Weekly records (filtered): {len(weekly_data):,}")
+print(f"✓ Unique products in dataset: {weekly_data['product_id'].nunique():,}")
+
+# แสดงตัวอย่างสินค้า Top 10
+print("\n📦 Top 10 Fashion Products by Total Sales:")
+top_products_info = weekly_data.groupby(['product_id', 'product_category_name_english'])['QuantitySold'].sum().sort_values(ascending=False).head(10)
+for (pid, cat), qty in top_products_info.items():
+    print(f"  {pid[:30]}... ({cat}): {qty} units")
 
 df = weekly_data.copy()
 df['AverageSellingPrice'] = df.groupby('product_id')['AverageSellingPrice'].ffill().bfill()
@@ -225,7 +247,7 @@ for col in ['Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean'
 
 print(f"✓ Processing time: {time.time() - start_time:.1f}s")
 
-print("\n=== Feature Engineering ===")
+print("\n=== Feature Engineering (Product-Level) ===")
 df = df.sort_values(by=['product_id', 'Date'])
 
 le_cat = LabelEncoder()
@@ -252,7 +274,6 @@ def create_rolling_features(group, col, windows=IMPORTANT_ROLLS):
         group[f'{col}_Roll_Mean_{window}'] = group[col].rolling(window=window, min_periods=1).mean()
     return group
 
-# สร้าง IsWeekend โดยไม่ต้องเก็บ DayOfWeek
 is_weekend_series = (df['Date'].dt.dayofweek.isin([5, 6])).astype(int)
 df['IsWeekend'] = is_weekend_series
 
@@ -272,9 +293,9 @@ print(f"✓ Total features: {len(df.columns)}")
 print(f"✓ Total records: {len(df):,}")
 
 # =============================================================================
-# PREPARE TRAIN/TEST
+# PREPARE TRAIN/TEST (Product-Level Model)
 # =============================================================================
-print("\n=== Preparing Train/Test Split ===")
+print("\n=== Preparing Train/Test Split (Product-Level) ===")
 feature_cols = [
     'category_encoded', 'seller_state_encoded',
     'AverageSellingPrice', 'Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean',
@@ -328,7 +349,7 @@ def _evaluate_and_record(name, model_obj, X_tr, y_tr, X_te, y_te):
     return row, y_pred_te, model_obj
 
 print("\n" + "="*90)
-print("TRAIN & EVALUATE ALL MODELS")
+print("TRAIN & EVALUATE ALL MODELS (Fashion Products Only)")
 print("="*90)
 
 models = {
@@ -374,25 +395,18 @@ print(
 )
 
 best_name = cmp_df.iloc[0]['model']
-# best_pred_test = preds[best_name] # (ไม่จำเป็นต้องใช้ตัวแปรนี้แล้ว)
 best_model = fitted_models[best_name]
 print(f"\n✓ Best model by R² then RMSE: {best_name}")
 
-# --- (การเปลี่ยนแปลงที่ 2: วน Loop เพื่อพล็อตกราฟของทุกโมเดล) ---
+# วน Loop เพื่อพล็อตกราฟของทุกโมเดล
 print("\n" + "="*90)
 print("PLOTTING EVALUATION FOR ALL MODELS")
 print("="*90)
 
 for model_name, y_pred in preds.items():
     print(f"\nGenerating plots for {model_name}...")
-    
-    # สร้างชื่อไฟล์ที่ไม่ซ้ำกันสำหรับแต่ละโมเดล
-    save_path = f'/mnt/user-data/outputs/eval_{str(model_name).lower().replace(" ", "_")}.png'
-    
-    # เรียกใช้ฟังก์ชัน plot ที่อัปเดตแล้ว
-    plot_simple_evaluation(y_test, y_pred, model_name=model_name, save_path=save_path)
-# --- (สิ้นสุดการเปลี่ยนแปลงที่ 2) ---
-
+    save_path = f'/mnt/user-data/outputs/eval_fashion_{str(model_name).lower().replace(" ", "_")}.png'
+    plot_simple_evaluation(y_test, y_pred, model_name=f"{model_name} (Fashion)", save_path=save_path)
 
 print("\nRunning cross-validation on a sample with the best model...")
 sample_size = min(10000, len(X_train_scaled))
@@ -400,21 +414,35 @@ sample_idx = np.random.choice(len(X_train_scaled), sample_size, replace=False)
 cross_validate_simple(best_model, X_train_scaled[sample_idx], y_train[sample_idx], cv=3)
 
 # =============================================================================
-# PRICE OPTIMIZATION (ใช้ best_model ที่ชนะ)
+# PRICE OPTIMIZATION (Product-Level) - ใช้ best_model
 # =============================================================================
-print("\n=== Price Optimization (Grid Search) ===")
+print("\n" + "="*90)
+print("PRICE OPTIMIZATION (PRODUCT-LEVEL) - Fashion Items")
+print("="*90)
 
 df_train = df.iloc[:split_idx].copy()
-target_products = df_train.groupby('product_id')['QuantitySold'].sum().nlargest(NUM_PRODUCTS_TO_OPTIMIZE).index.values
-print(f"✓ Target products: {target_products}")
 
+# เลือก Top N fashion products ที่มียอดขายสูงสุด
+target_products = df_train.groupby('product_id')['QuantitySold'].sum().nlargest(NUM_PRODUCTS_TO_OPTIMIZE).index.values
+print(f"✓ Optimizing {NUM_PRODUCTS_TO_OPTIMIZE} top fashion products")
+
+# ดึงข้อมูลของแต่ละสินค้าเพื่อใช้ในการ optimize
 base_data = df_train.groupby('product_id').last()
 
-price_stats = df_train[df_train['product_id'].isin(target_products)].groupby('product_id')['AverageSellingPrice'].agg(['mean', 'std'])
-print(f"\n✓ Price Statistics:")
-print(price_stats)
+# แสดงข้อมูลสินค้าที่จะ optimize
+print("\n📦 Products to Optimize:")
+for i, prod_id in enumerate(target_products):
+    prod_info = df_train[df_train['product_id'] == prod_id].iloc[-1]
+    category = prod_info['product_category_name_english']
+    avg_price = df_train[df_train['product_id'] == prod_id]['AverageSellingPrice'].mean()
+    total_sales = df_train[df_train['product_id'] == prod_id]['QuantitySold'].sum()
+    print(f"  {i+1}. {prod_id[:30]}... ({category})")
+    print(f"     Avg Price: R${avg_price:.2f}, Total Sales: {total_sales:.0f} units")
 
-def optimize_price_grid(model, prod_id, price_bounds, cost, scaler, feature_cols):
+price_stats = df_train[df_train['product_id'].isin(target_products)].groupby('product_id')['AverageSellingPrice'].agg(['mean', 'std'])
+
+def optimize_price_grid(model, prod_id, price_bounds, cost, scaler, feature_cols, product_name=""):
+    """Optimize price for a specific product using grid search"""
     prices = np.linspace(price_bounds[0], price_bounds[1], PRICE_GRID_POINTS)
     base_features = base_data.loc[prod_id][feature_cols].values
 
@@ -425,6 +453,7 @@ def optimize_price_grid(model, prod_id, price_bounds, cost, scaler, feature_cols
         features_unscaled = base_features.copy()
         features_unscaled[price_idx] = price
 
+        # อัพเดท lag features
         if 'AverageSellingPrice_Lag_1' in feature_cols:
             lag_idx = feature_cols.index('AverageSellingPrice_Lag_1')
             features_unscaled[lag_idx] = base_features[price_idx]
@@ -439,53 +468,64 @@ def optimize_price_grid(model, prod_id, price_bounds, cost, scaler, feature_cols
 
     return best_price, best_profit
 
-print("\n" + "="*60)
 optimization_results = {}
 
 for i, prod_id in enumerate(target_products):
-    print(f"\nOptimizing Product {i+1}/{len(target_products)}: {prod_id}")
+    prod_info = df_train[df_train['product_id'] == prod_id].iloc[-1]
+    product_name = f"{prod_info['product_category_name_english']}"
+    
+    print(f"\n{'='*70}")
+    print(f"Optimizing Product {i+1}/{len(target_products)}")
+    print(f"Product ID: {prod_id[:40]}...")
+    print(f"Category: {product_name}")
+    
     mean_price = price_stats.loc[prod_id, 'mean']
     price_bounds = (mean_price * 0.7, mean_price * 1.3)
     cost = PRODUCT_COSTS[i]
 
-    print(f"  Current avg price: ฿{mean_price:.2f}")
-    print(f"  Price range: ฿{price_bounds[0]:.2f} - ฿{price_bounds[1]:.2f}")
-    print(f"  Cost: ฿{cost:.2f}")
+    print(f"Current avg price: R${mean_price:.2f}")
+    print(f"Price range: R${price_bounds[0]:.2f} - R${price_bounds[1]:.2f}")
+    print(f"Cost: R${cost:.2f}")
 
     t0 = time.time()
     optimal_price, max_profit = optimize_price_grid(
-        best_model, prod_id, price_bounds, cost, scaler_X, feature_cols
+        best_model, prod_id, price_bounds, cost, scaler_X, feature_cols, product_name
     )
     opt_time = time.time() - t0
 
     optimization_results[prod_id] = {
+        'product_name': product_name,
         'optimal_price': optimal_price,
         'max_profit': max_profit,
         'current_price': mean_price,
         'time': opt_time
     }
 
-    print(f"  ✓ Optimal price: ฿{optimal_price:.2f}")
-    print(f"  ✓ Expected profit: ฿{max_profit:,.2f}")
-    print(f"  ✓ Optimization time: {opt_time:.3f}s")
+    print(f"✓ Optimal price: R${optimal_price:.2f}")
+    print(f"✓ Expected profit: R${max_profit:,.2f}")
+    print(f"✓ Price change: {(optimal_price/mean_price - 1)*100:+.1f}%")
+    print(f"✓ Optimization time: {opt_time:.3f}s")
 
 # =============================================================================
-# SUMMARY
+# SUMMARY (Product-Level)
 # =============================================================================
-print("\n" + "="*60)
-print("OPTIMIZATION SUMMARY")
-print("="*60)
+print("\n" + "="*70)
+print("OPTIMIZATION SUMMARY - FASHION PRODUCTS")
+print("="*70)
 
 total_profit = 0
 for prod_id, result in optimization_results.items():
-    print(f"\nProduct {prod_id}:")
-    print(f"  Current Price: ฿{result['current_price']:.2f}")
-    print(f"  Optimal Price: ฿{result['optimal_price']:.2f} ({result['optimal_price']/result['current_price']*100-100:+.1f}%)")
-    print(f"  Expected Profit: ฿{result['max_profit']:,.2f}")
+    print(f"\n📦 Product: {prod_id[:40]}...")
+    print(f"   Category: {result['product_name']}")
+    print(f"   Current Price: R${result['current_price']:.2f}")
+    print(f"   Optimal Price: R${result['optimal_price']:.2f} ({result['optimal_price']/result['current_price']*100-100:+.1f}%)")
+    print(f"   Expected Profit: R${result['max_profit']:,.2f}")
     total_profit += result['max_profit']
 
-print(f"\n{'='*60}")
-print(f"TOTAL EXPECTED PROFIT: ฿{total_profit:,.2f}")
-print(f"{'='*60}")
+print(f"\n{'='*70}")
+print(f"TOTAL EXPECTED PROFIT (Fashion Products): R${total_profit:,.2f}")
+print(f"{'='*70}")
 
 print("\n✓ Script finished successfully!")
+print(f"✓ Model trained on {len(popular_products):,} fashion products")
+print(f"✓ {NUM_PRODUCTS_TO_OPTIMIZE} products optimized")

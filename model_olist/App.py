@@ -17,8 +17,7 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from lightgbm import LGBMRegressor
 
-# --- (การเปลี่ยนแปลงที่ 1) ---
-# เพิ่มการนำเข้า XGBoost
+# XGBoost
 try:
     from xgboost import XGBRegressor
     _HAS_XGB = True
@@ -26,7 +25,6 @@ try:
 except ImportError:
     print("⚠ XGBoost not found. Please install it: pip install xgboost")
     _HAS_XGB = False
-# --- (สิ้นสุดการเปลี่ยนแปลง) ---
 
 import matplotlib
 matplotlib.use('Agg')  # Non-GUI backend
@@ -46,6 +44,16 @@ REPORT_FOLDER = 'reports'
 
 # Exchange rate: 1 BRL (Brazilian Real) = 6.8 THB (Thai Baht)
 BRL_TO_THB = 6.8
+
+# Fashion categories filter
+FASHION_KEYWORDS = ['fashion', 'watches_gifts', 'cool_stuff']
+
+def is_fashion_category(category_name):
+    """ตรวจสอบว่าหมวดหมู่เป็น fashion หรือไม่"""
+    if pd.isna(category_name):
+        return False
+    category_lower = str(category_name).lower()
+    return any(keyword in category_lower for keyword in FASHION_KEYWORDS)
 
 for folder in [UPLOAD_FOLDER, MODEL_FOLDER, REPORT_FOLDER]:
     os.makedirs(folder, exist_ok=True)
@@ -93,7 +101,7 @@ def get_dashboard_metrics():
                 model_accuracy = r2_score(y_test, y_pred_test)
             except Exception as e:
                 print(f"Error calculating R2: {e}")
-                model_accuracy = 0.0 # fallback
+                model_accuracy = 0.0
 
         # Calculate metrics
         total_revenue_brl = (weekly_data['QuantitySold'] * weekly_data['AverageSellingPrice']).sum()
@@ -164,7 +172,7 @@ def get_sales_trend():
 
 @app.route('/api/dashboard/top-products', methods=['GET'])
 def get_top_products():
-    """Get top selling products"""
+    """Get top selling fashion products"""
     try:
         global weekly_data
         
@@ -199,66 +207,87 @@ def get_top_products():
 
 
 # ============================================================================
-# API: Categories (NEW!)
+# API: Products (Product-Level, not Category-Level)
 # ============================================================================
 
-@app.route('/api/categories', methods=['GET'])
-def get_categories():
-    """Get all available product categories"""
+@app.route('/api/products', methods=['GET'])
+def get_products():
+    """Get all available fashion products with basic info"""
     try:
         global weekly_data
         
         if weekly_data is None:
             return jsonify({'error': 'No data loaded'}), 400
         
-        categories = sorted(weekly_data['product_category_name_english'].dropna().unique().tolist())
+        # Get product summary
+        product_summary = weekly_data.groupby(['product_id', 'product_category_name_english']).agg({
+            'QuantitySold': 'sum',
+            'AverageSellingPrice': 'mean'
+        }).reset_index()
         
-        return jsonify({'categories': categories})
+        product_summary['revenue'] = product_summary['QuantitySold'] * product_summary['AverageSellingPrice']
+        product_summary = product_summary.sort_values('revenue', ascending=False)
+        
+        products = []
+        for _, row in product_summary.iterrows():
+            products.append({
+                'product_id': row['product_id'],
+                'product_id_short': row['product_id'][:30] + '...',
+                'category': row['product_category_name_english'],
+                'total_sales': int(row['QuantitySold']),
+                'avg_price_brl': round(row['AverageSellingPrice'], 2),
+                'avg_price_thb': round(row['AverageSellingPrice'] * BRL_TO_THB, 2),
+                'revenue_brl': round(row['revenue'], 2),
+                'revenue_thb': round(row['revenue'] * BRL_TO_THB, 2)
+            })
+        
+        return jsonify({'products': products})
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/categories/<category>/analysis', methods=['GET'])
-def get_category_analysis(category):
-    """Get analysis for a specific category"""
+@app.route('/api/products/<product_id>/analysis', methods=['GET'])
+def get_product_analysis(product_id):
+    """Get detailed analysis for a specific product"""
     try:
         global weekly_data
         
         if weekly_data is None:
             return jsonify({'error': 'No data loaded'}), 400
         
-        category_data = weekly_data[weekly_data['product_category_name_english'] == category]
+        product_data = weekly_data[weekly_data['product_id'] == product_id]
         
-        if len(category_data) == 0:
-            return jsonify({'error': 'Category not found'}), 404
+        if len(product_data) == 0:
+            return jsonify({'error': 'Product not found'}), 404
         
         # Calculate statistics
-        total_sales = int(category_data['QuantitySold'].sum())
-        avg_price_brl = float(category_data['AverageSellingPrice'].mean())
+        total_sales = int(product_data['QuantitySold'].sum())
+        avg_price_brl = float(product_data['AverageSellingPrice'].mean())
         avg_price_thb = avg_price_brl * BRL_TO_THB
-        total_revenue_brl = float((category_data['QuantitySold'] * category_data['AverageSellingPrice']).sum())
+        total_revenue_brl = float((product_data['QuantitySold'] * product_data['AverageSellingPrice']).sum())
         total_revenue_thb = total_revenue_brl * BRL_TO_THB
-        num_products = category_data['product_id'].nunique()
+        category = product_data['product_category_name_english'].iloc[0]
         
         details = {
+            'product_id': product_id,
+            'product_id_short': product_id[:30] + '...',
             'category': category,
             'total_sales': total_sales,
             'avg_price_brl': round(avg_price_brl, 2),
             'avg_price_thb': round(avg_price_thb, 2),
-            'min_price_brl': round(float(category_data['AverageSellingPrice'].min()), 2),
-            'min_price_thb': round(float(category_data['AverageSellingPrice'].min()) * BRL_TO_THB, 2),
-            'max_price_brl': round(float(category_data['AverageSellingPrice'].max()), 2),
-            'max_price_thb': round(float(category_data['AverageSellingPrice'].max()) * BRL_TO_THB, 2),
+            'min_price_brl': round(float(product_data['AverageSellingPrice'].min()), 2),
+            'min_price_thb': round(float(product_data['AverageSellingPrice'].min()) * BRL_TO_THB, 2),
+            'max_price_brl': round(float(product_data['AverageSellingPrice'].max()), 2),
+            'max_price_thb': round(float(product_data['AverageSellingPrice'].max()) * BRL_TO_THB, 2),
             'total_revenue_brl': round(total_revenue_brl, 2),
             'total_revenue_thb': round(total_revenue_thb, 2),
-            'num_products': num_products,
-            'weeks_active': int(len(category_data)),
-            'avg_weekly_sales': round(category_data['QuantitySold'].mean(), 1)
+            'weeks_active': int(len(product_data)),
+            'avg_weekly_sales': round(product_data['QuantitySold'].mean(), 1)
         }
         
         # Sales history
-        history = category_data.groupby('Date').agg({
+        history = product_data.groupby('Date').agg({
             'QuantitySold': 'sum',
             'AverageSellingPrice': 'mean'
         }).sort_index().tail(12)
@@ -270,23 +299,6 @@ def get_category_analysis(category):
             'prices_thb': [round(p * BRL_TO_THB, 2) for p in history['AverageSellingPrice'].tolist()]
         }
         
-        # Top products in category
-        top_products = category_data.groupby('product_id').agg({
-            'QuantitySold': 'sum',
-            'AverageSellingPrice': 'mean'
-        }).reset_index()
-        top_products['revenue'] = top_products['QuantitySold'] * top_products['AverageSellingPrice']
-        top_products = top_products.sort_values('revenue', ascending=False).head(5)
-        
-        details['top_products'] = [{
-            'product_id': row['product_id'][:20] + '...',
-            'units_sold': int(row['QuantitySold']),
-            'avg_price_brl': round(row['AverageSellingPrice'], 2),
-            'avg_price_thb': round(row['AverageSellingPrice'] * BRL_TO_THB, 2),
-            'revenue_brl': round(row['revenue'], 2),
-            'revenue_thb': round(row['revenue'] * BRL_TO_THB, 2)
-        } for _, row in top_products.iterrows()]
-        
         return jsonify(details)
     
     except Exception as e:
@@ -294,12 +306,12 @@ def get_category_analysis(category):
 
 
 # ============================================================================
-# API: Price Optimization (Category-based)
+# API: Price Optimization (Product-based)
 # ============================================================================
 
-@app.route('/api/optimize/category', methods=['POST'])
-def optimize_category_price():
-    """Optimize price for a category using Particle Swarm Optimization (PSO)"""
+@app.route('/api/optimize/product', methods=['POST'])
+def optimize_product_price():
+    """Optimize price for a specific product using Particle Swarm Optimization (PSO)"""
     try:
         global model, scaler, weekly_data, feature_cols
         
@@ -307,30 +319,20 @@ def optimize_category_price():
             return jsonify({'error': 'Model not trained yet'}), 400
         
         data = request.json
-        category = data.get('category')
+        product_id = data.get('product_id')
         cost_brl = float(data.get('cost', 10.0))
         price_range = float(data.get('price_range', 0.3))
         
-        # Get top product in this category
-        category_data = weekly_data[weekly_data['product_category_name_english'] == category]
-        
-        if len(category_data) == 0:
-            return jsonify({'error': 'Category not found'}), 404
-        
-        # Get product with highest revenue
-        product_revenue = category_data.groupby('product_id').agg({
-            'QuantitySold': 'sum',
-            'AverageSellingPrice': 'mean'
-        })
-        product_revenue['revenue'] = product_revenue['QuantitySold'] * product_revenue['AverageSellingPrice']
-        top_product_id = product_revenue.sort_values('revenue', ascending=False).index[0]
-        
         # Get product data
-        product_data = category_data[category_data['product_id'] == top_product_id].sort_values('Date')
+        product_data = weekly_data[weekly_data['product_id'] == product_id].sort_values('Date')
+        
+        if len(product_data) == 0:
+            return jsonify({'error': 'Product not found'}), 404
         
         # Get latest data point for base features
         latest_data = product_data.iloc[-1:].copy()
         current_price_brl = float(latest_data['AverageSellingPrice'].iloc[0])
+        category = latest_data['product_category_name_english'].iloc[0]
         
         # Create price bounds for PSO
         lower_bound = current_price_brl * (1 - price_range)
@@ -376,7 +378,6 @@ def optimize_category_price():
         expected_demand = int(max(0, round(model.predict(test_scaled_opt)[0])))
         
         # ========== Generate visualization curve ==========
-        # Create curve for visualization (20 points)
         test_prices = np.linspace(lower_bound, upper_bound, 20)
         profits_brl = []
         profits_thb = []
@@ -403,8 +404,9 @@ def optimize_category_price():
         max_profit_thb = max_profit_brl * BRL_TO_THB
         
         result = {
+            'product_id': product_id,
+            'product_id_short': product_id[:30] + '...',
             'category': category,
-            'product_id': top_product_id[:30] + '...',
             'current_price_brl': round(current_price_brl, 2),
             'current_price_thb': round(current_price_brl * BRL_TO_THB, 2),
             'optimal_price_brl': round(optimal_price_brl, 2),
@@ -437,9 +439,6 @@ def optimize_category_price():
         return jsonify({'error': str(e)}), 500
 
 
-
-
-
 def get_price_recommendation(optimal_price, current_price):
     """Generate price recommendation text"""
     change_pct = (optimal_price / (current_price + 1e-6) - 1) * 100
@@ -457,12 +456,12 @@ def get_price_recommendation(optimal_price, current_price):
 
 
 # ============================================================================
-# API: Model Training
+# API: Model Training (Fashion Products Only)
 # ============================================================================
 
 @app.route('/api/model/train', methods=['POST'])
 def train_model():
-    """Train ML model with uploaded data"""
+    """Train ML model with uploaded data - Fashion products only"""
     try:
         global model, scaler, encoders, df_train, df_test, feature_cols, weekly_data
         
@@ -475,7 +474,7 @@ def train_model():
         
         start_time = datetime.now()
         
-        # Process data (simplified version)
+        # Process data
         df_orders = df_orders[df_orders['order_status'] == 'delivered'].copy()
         df_orders['order_purchase_timestamp'] = pd.to_datetime(df_orders['order_purchase_timestamp'])
         
@@ -483,6 +482,14 @@ def train_model():
         df = pd.merge(df, df_products, on='product_id', how='left')
         df = pd.merge(df, df_trans, on='product_category_name', how='left')
         df = pd.merge(df, df_sellers[['seller_id', 'seller_state']], on='seller_id', how='left')
+        
+        # ===== กรองเฉพาะ Fashion Products =====
+        print(f"Records before fashion filter: {len(df):,}")
+        df = df[df['product_category_name_english'].apply(is_fashion_category)].copy()
+        print(f"Records after fashion filter: {len(df):,}")
+        
+        if len(df) == 0:
+            return jsonify({'status': 'error', 'error': 'No fashion products found in dataset'}), 400
         
         df['seller_state'] = df['seller_state'].fillna('Unknown')
         le_state = LabelEncoder()
@@ -497,7 +504,7 @@ def train_model():
         df_agg['Date'] = df_agg['order_purchase_timestamp']
         df_agg = df_agg.set_index('Date')
         
-        # Weekly aggregation
+        # Weekly aggregation (Product-level)
         weekly_data = df_agg.groupby([
             'product_id', 'product_category_name_english', 'seller_state_encoded',
             pd.Grouper(freq='W-MON')
@@ -511,12 +518,12 @@ def train_model():
         ).reset_index()
         
         # Filter popular products
-        MIN_SALES = 50
+        MIN_SALES = 10
         product_sales = weekly_data.groupby('product_id')['QuantitySold'].sum()
         popular_products = product_sales[product_sales >= MIN_SALES].index
         weekly_data = weekly_data[weekly_data['product_id'].isin(popular_products)]
         
-        # Feature engineering (simplified)
+        # Feature engineering
         weekly_data = weekly_data.sort_values(['product_id', 'Date'])
         
         le_cat = LabelEncoder()
@@ -574,14 +581,11 @@ def train_model():
         X_test_scaled = scaler.transform(X_test)
         
         # Train model
-        # --- (การเปลี่ยนแปลงที่ 2) ---
-        
         if not _HAS_XGB:
             return jsonify({'status': 'error', 'error': 'XGBoost library not found. Please install it with: pip install xgboost'}), 500
 
-        print("Training with best model: XGBoost...")
+        print("Training with XGBoost on Fashion products...")
         
-        # โมเดลใหม่ (XGBoost) อ้างอิงจาก main_olist.py
         model = XGBRegressor(
             n_estimators=300, 
             learning_rate=0.05, 
@@ -592,19 +596,6 @@ def train_model():
             random_state=42, 
             n_jobs=-1
         )
-
-        # โมเดลเดิม (LGBM)
-        # model = LGBMRegressor(
-        #     n_estimators=300,
-        #     learning_rate=0.05,
-        #     num_leaves=31,
-        #     max_depth=15,
-        #     random_state=42,
-        #     n_jobs=-1,
-        #     verbosity=-1
-        # )
-        # --- (สิ้นสุดการเปลี่ยนแปลง) ---
-        
         
         model.fit(X_train_scaled, y_train)
         
@@ -617,7 +608,6 @@ def train_model():
         test_mae = mean_absolute_error(y_test, y_pred_test)
         test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
         
-        # เพิ่ม +1e-6 เพื่อป้องกันการหารด้วย 0
         y_test_safe = y_test.copy()
         y_test_safe[y_test_safe == 0] = 1e-6
         test_mape = np.mean(np.abs((y_test - y_pred_test) / y_test_safe)) * 100
@@ -640,6 +630,7 @@ def train_model():
             'data_size': len(weekly_data),
             'num_products': len(popular_products),
             'num_categories': weekly_data['product_category_name_english'].nunique(),
+            'product_type': 'Fashion Products Only',
             'metrics': {
                 'train_r2': round(train_r2, 4),
                 'test_r2': round(test_r2, 4),
@@ -690,7 +681,8 @@ def get_model_status():
         'trained': True,
         'train_samples': len(df_train) if df_train is not None else 0,
         'test_samples': len(df_test) if df_test is not None else 0,
-        'num_features': len(feature_cols) if feature_cols else 0
+        'num_features': len(feature_cols) if feature_cols else 0,
+        'product_type': 'Fashion Products'
     })
 
 
@@ -755,11 +747,13 @@ def internal_error(e):
 
 if __name__ == '__main__':
     print("=" * 60)
-    print("🚀 Dynamic Pricing System - Backend API (Improved)")
+    print("🚀 Dynamic Pricing System - Fashion Products Only")
     print("=" * 60)
     print(f"Server running on http://localhost:5000")
     print(f"Currency: Brazilian Real (R$) + Thai Baht (฿)")
     print(f"Exchange Rate: 1 BRL = {BRL_TO_THB} THB")
+    print(f"Product Focus: Fashion Items Only")
+    print(f"Model Level: Product-Level (not Category)")
     print(f"Upload folder: {UPLOAD_FOLDER}")
     print(f"Model folder: {MODEL_FOLDER}")
     print("=" * 60)

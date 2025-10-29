@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dynamic Pricing Analytics Dashboard - Brazilian E-commerce</title>
+    <title>Dynamic Pricing - Fashion Products (Product-Level)</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
@@ -55,6 +55,10 @@
             margin-left: 8px;
         }
 
+        .fashion-badge {
+            background: #ec4899;
+        }
+
         .nav-tabs {
             display: flex;
             gap: 8px;
@@ -77,14 +81,14 @@
         }
 
         .nav-tab.active {
-            background: #3b82f6;
+            background: #ec4899;
             color: white;
-            box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+            box-shadow: 0 2px 4px rgba(236, 72, 153, 0.3);
         }
 
         .nav-tab:hover:not(.active) {
-            background: #f1f5f9;
-            color: #3b82f6;
+            background: #fce7f3;
+            color: #ec4899;
         }
 
         .tab-content {
@@ -131,7 +135,7 @@
         .metric-value {
             font-size: 28px;
             font-weight: 700;
-            color: #3b82f6;
+            color: #ec4899;
             margin-bottom: 4px;
         }
 
@@ -177,12 +181,12 @@
         }
 
         .btn-primary {
-            background: #3b82f6;
+            background: #ec4899;
             color: white;
         }
 
         .btn-primary:hover {
-            background: #2563eb;
+            background: #db2777;
         }
 
         .btn-primary:disabled {
@@ -214,6 +218,9 @@
             width: 100%;
             border-collapse: collapse;
             font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+            display: block;
         }
 
         .data-table th,
@@ -224,13 +231,15 @@
         }
 
         .data-table th {
-            background: #f8fafc;
+            background: #fce7f3;
             font-weight: 600;
             color: #374151;
+            position: sticky;
+            top: 0;
         }
 
         .data-table tr:hover {
-            background: #f8fafc;
+            background: #fce7f3;
         }
 
         .loading {
@@ -240,8 +249,8 @@
         }
 
         .spinner {
-            border: 3px solid #e2e8f0;
-            border-top-color: #3b82f6;
+            border: 3px solid #fce7f3;
+            border-top-color: #ec4899;
             border-radius: 50%;
             width: 40px;
             height: 40px;
@@ -274,7 +283,7 @@
         }
 
         .toast.info {
-            background: #3b82f6;
+            background: #ec4899;
         }
 
         @keyframes slideIn {
@@ -289,7 +298,7 @@
         }
 
         .file-upload {
-            border: 2px dashed #cbd5e1;
+            border: 2px dashed #fbbf24;
             border-radius: 12px;
             padding: 40px;
             text-align: center;
@@ -298,13 +307,13 @@
         }
 
         .file-upload:hover {
-            border-color: #3b82f6;
-            background: #f8fafc;
+            border-color: #ec4899;
+            background: #fef3f2;
         }
 
         .optimization-result {
-            background: #f0f9ff;
-            border: 1px solid #bfdbfe;
+            background: #fef3f2;
+            border: 1px solid #fecdd3;
             border-radius: 12px;
             padding: 20px;
             margin-top: 20px;
@@ -354,22 +363,47 @@
             font-size: 14px;
             color: #64748b;
         }
+
+        .product-selector {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 8px;
+        }
+
+        .product-item {
+            padding: 12px;
+            border-bottom: 1px solid #f1f5f9;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .product-item:hover {
+            background: #fce7f3;
+        }
+
+        .product-item.selected {
+            background: #fce7f3;
+            border-left: 4px solid #ec4899;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>
-                🇧🇷 Dynamic Pricing Analytics Dashboard
+                👗 Fashion Dynamic Pricing System (Product-Level)
                 <span class="currency-badge">R$ BRL</span>
                 <span class="currency-badge" style="background: #6366f1;">฿ THB</span>
+                <span class="currency-badge fashion-badge">Fashion Only</span>
             </h1>
-            <p>ระบบช่วยตัดสินใจและกำหนดราคาสำหรับ E-commerce ประเทศบราซิล</p>
+            <p>ระบบกำหนดราคาอัจฉริยะสำหรับสินค้าแฟชั่น - วิเคราะห์ในระดับรายการสินค้า (Product-Level)</p>
         </div>
 
         <div class="nav-tabs">
             <button class="nav-tab active" onclick="showTab('dashboard')">📊 Dashboard</button>
-            <button class="nav-tab" onclick="showTab('products')">🔍 Category Analysis</button>
+            <button class="nav-tab" onclick="showTab('products')">👗 Fashion Products</button>
             <button class="nav-tab" onclick="showTab('optimization')">💰 Price Optimization</button>
             <button class="nav-tab" onclick="showTab('training')">🤖 Model Training</button>
         </div>
@@ -379,7 +413,7 @@
                 <div class="card metric-card">
                     <div class="metric-value" id="totalRevenueBRL">Loading...</div>
                     <div class="metric-value-sub" id="totalRevenueTHB">--</div>
-                    <div class="metric-label">Total Revenue</div>
+                    <div class="metric-label">Total Revenue (Fashion)</div>
                     <div class="metric-change positive" id="revenueChange">--</div>
                 </div>
                 <div class="card metric-card">
@@ -387,21 +421,21 @@
                     <div class="metric-label">Total Sales (units)</div>
                     <div class="metric-change positive" id="salesChange">--</div>
                 </div>
-                <!-- <div class="card metric-card">
-                    <div class="metric-value" id="modelAccuracy">Loading...</div>
-                    <div class="metric-label">Model R² Score</div>
-                </div> -->
+                <div class="card metric-card">
+                    <div class="metric-value" id="totalProducts">Loading...</div>
+                    <div class="metric-label">Fashion Products</div>
+                </div>
             </div>
 
             <div class="grid grid-2">
                 <div class="card">
-                    <h3 class="card-title">Sales Trend</h3>
+                    <h3 class="card-title">Sales Trend (Last 12 Weeks)</h3>
                     <div class="chart-container">
                         <canvas id="salesTrendChart"></canvas>
                     </div>
                 </div>
                 <div class="card">
-                    <h3 class="card-title">Top Products</h3>
+                    <h3 class="card-title">Top Fashion Products</h3>
                     <div id="topProductsContainer">
                         <div class="loading">
                             <div class="spinner"></div>
@@ -414,27 +448,32 @@
 
         <div id="products" class="tab-content">
             <div class="card">
-                <h3 class="card-title">🔍 Category Analysis</h3>
+                <h3 class="card-title">👗 Fashion Products Catalog</h3>
+                
                 <div class="form-group">
-                    <label class="form-label">Select Category</label>
-                    <select id="categorySelect" class="select-field" onchange="loadCategoryAnalysis()">
-                        <option value="">-- Select a category --</option>
-                    </select>
+                    <label class="form-label">Search Product</label>
+                    <input type="text" id="productSearch" class="input-field" placeholder="Search by product ID or category..." onkeyup="filterProducts()">
                 </div>
                 
-                <div id="categoryDetailsContainer"></div>
+                <div id="productsListContainer">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading products...
+                    </div>
+                </div>
             </div>
         </div>
 
         <div id="optimization" class="tab-content">
             <div class="card">
-                <h3 class="card-title">💰 Price Optimization by Category</h3>
+                <h3 class="card-title">💰 Price Optimization (Product-Level)</h3>
                 
                 <div class="form-group">
-                    <label class="form-label">Select Category</label>
-                    <select id="optimizeCategorySelect" class="select-field">
-                        <option value="">-- Select a category --</option>
-                    </select>
+                    <label class="form-label">Select Fashion Product</label>
+                    <input type="text" id="optimizeProductSearch" class="input-field" placeholder="Search product..." onkeyup="filterOptimizeProducts()">
+                    <div id="optimizeProductList" class="product-selector">
+                        <div class="loading">Loading products...</div>
+                    </div>
                 </div>
                 
                 <div class="form-group">
@@ -460,13 +499,14 @@
                 <div class="file-upload" onclick="document.getElementById('fileInput').click()">
                     <p>📁 Click to upload CSV files</p>
                     <p style="font-size: 12px; color: #64748b;">Required: orders, items, products, sellers, translation</p>
+                    <p style="font-size: 12px; color: #ec4899; font-weight: 600;">⚠ Only FASHION products will be processed</p>
                     <input type="file" id="fileInput" multiple accept=".csv" style="display: none;" onchange="handleFileUpload(event)">
                 </div>
                 
                 <div id="fileStatus" style="margin-top: 20px;"></div>
                 
                 <button class="btn btn-primary" id="trainButton" onclick="trainModel()" disabled style="margin-top: 20px;">
-                    Train Model
+                    Train Model (Fashion Only)
                 </button>
                 
                 <div id="trainingResult" style="margin-top: 20px;"></div>
@@ -480,7 +520,8 @@
         const BRL_TO_THB = 6.8;
         
         let charts = {};
-        let categories = [];
+        let allProducts = [];
+        let selectedProductId = null;
 
         // Utility Functions
         function formatBRL(num) {
@@ -506,9 +547,9 @@
             if (tabName === 'dashboard') {
                 loadDashboard();
             } else if (tabName === 'products') {
-                loadCategories();
+                loadProducts();
             } else if (tabName === 'optimization') {
-                loadCategories();
+                loadProductsForOptimization();
             }
         }
 
@@ -522,112 +563,115 @@
             setTimeout(() => toast.remove(), 3000);
         }
 
-        // Load Categories
-        async function loadCategories() {
+        // Load Products
+        async function loadProducts() {
             try {
-                const res = await fetch(`${API_URL}/categories`);
+                const res = await fetch(`${API_URL}/products`);
                 const data = await res.json();
                 
                 if (res.ok) {
-                    categories = data.categories;
-                    
-                    // Populate category dropdowns
-                    const categorySelect = document.getElementById('categorySelect');
-                    const optimizeCategorySelect = document.getElementById('optimizeCategorySelect');
-                    
-                    categorySelect.innerHTML = '<option value="">-- Select a category --</option>';
-                    optimizeCategorySelect.innerHTML = '<option value="">-- Select a category --</option>';
-                    
-                    categories.forEach(cat => {
-                        categorySelect.innerHTML += `<option value="${cat}">${cat}</option>`;
-                        optimizeCategorySelect.innerHTML += `<option value="${cat}">${cat}</option>`;
-                    });
+                    allProducts = data.products;
+                    displayProducts(allProducts);
+                    showToast('Products loaded successfully', 'success');
                 }
             } catch (error) {
-                showToast('Error loading categories: ' + error.message, 'error');
+                showToast('Error loading products: ' + error.message, 'error');
             }
         }
 
-        // Load Category Analysis
-        async function loadCategoryAnalysis() {
-            const category = document.getElementById('categorySelect').value;
+        function displayProducts(products) {
+            const container = document.getElementById('productsListContainer');
             
-            if (!category) {
-                document.getElementById('categoryDetailsContainer').innerHTML = '';
+            if (products.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #64748b;">No products found</p>';
                 return;
             }
             
+            let html = '<table class="data-table"><thead><tr>';
+            html += '<th>Product ID</th><th>Category</th><th>Total Sales</th><th>Avg Price (R$)</th><th>Avg Price (฿)</th><th>Revenue (R$)</th>';
+            html += '</tr></thead><tbody>';
+            
+            products.forEach(p => {
+                html += `<tr>
+                    <td>${p.product_id_short}</td>
+                    <td>${p.category}</td>
+                    <td>${formatNumber(p.total_sales)}</td>
+                    <td>${formatBRL(p.avg_price_brl)}</td>
+                    <td>${formatTHB(p.avg_price_thb)}</td>
+                    <td>${formatBRL(p.revenue_brl)}</td>
+                </tr>`;
+            });
+            
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        function filterProducts() {
+            const search = document.getElementById('productSearch').value.toLowerCase();
+            const filtered = allProducts.filter(p => 
+                p.product_id.toLowerCase().includes(search) || 
+                p.category.toLowerCase().includes(search)
+            );
+            displayProducts(filtered);
+        }
+
+        // Load Products for Optimization
+        async function loadProductsForOptimization() {
             try {
-                const res = await fetch(`${API_URL}/categories/${encodeURIComponent(category)}/analysis`);
+                const res = await fetch(`${API_URL}/products`);
                 const data = await res.json();
                 
                 if (res.ok) {
-                    displayCategoryDetails(data);
-                    showToast('Category analysis loaded', 'success');
-                } else {
-                    showToast(data.error, 'error');
+                    allProducts = data.products;
+                    displayOptimizeProducts(allProducts);
                 }
             } catch (error) {
-                showToast('Error: ' + error.message, 'error');
+                showToast('Error loading products: ' + error.message, 'error');
             }
         }
 
-        // Display Category Details
-        function displayCategoryDetails(data) {
-            const container = document.getElementById('categoryDetailsContainer');
+        function displayOptimizeProducts(products) {
+            const container = document.getElementById('optimizeProductList');
             
-            let html = `
-                <div class="card" style="margin-top: 20px; background: #f0fdf4;">
-                    <h3>Category: ${data.category}</h3>
-                    <div class="grid grid-2">
-                        <div>
-                            <p><strong>Total Sales:</strong> ${formatNumber(data.total_sales)} units</p>
-                            <p><strong>Number of Products:</strong> ${data.num_products}</p>
-                            <p><strong>Weeks Active:</strong> ${data.weeks_active}</p>
-                            <p><strong>Avg Weekly Sales:</strong> ${data.avg_weekly_sales}</p>
-                        </div>
-                        <div>
-                            <p><strong>Avg Price:</strong></p>
-                            <div class="dual-currency">
-                                <span class="currency-primary">${formatBRL(data.avg_price_brl)}</span>
-                                <span class="currency-secondary">(${formatTHB(data.avg_price_thb)})</span>
-                            </div>
-                            
-                            <p><strong>Total Revenue:</strong></p>
-                            <div class="dual-currency">
-                                <span class="currency-primary">${formatBRL(data.total_revenue_brl)}</span>
-                                <span class="currency-secondary">(${formatTHB(data.total_revenue_thb)})</span>
-                            </div>
-                        </div>
+            if (products.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #64748b;">No products available</p>';
+                return;
+            }
+            
+            let html = '';
+            products.slice(0, 50).forEach(p => {  // แสดงแค่ 50 รายการแรก
+                html += `
+                    <div class="product-item" onclick="selectProduct('${p.product_id}', this)">
+                        <div style="font-weight: 600; color: #0f172a;">${p.product_id_short}</div>
+                        <div style="font-size: 12px; color: #64748b;">${p.category}</div>
+                        <div style="font-size: 12px; color: #64748b;">Avg Price: ${formatBRL(p.avg_price_brl)}</div>
                     </div>
-                    
-                    <h4 style="margin-top: 20px;">Top 5 Products in Category</h4>
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Product ID</th>
-                                <th>Units Sold</th>
-                                <th>Avg Price (R$)</th>
-                                <th>Avg Price (฿)</th>
-                                <th>Revenue (R$)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${data.top_products.map(p => `
-                                <tr>
-                                    <td>${p.product_id}</td>
-                                    <td>${formatNumber(p.units_sold)}</td>
-                                    <td>${formatBRL(p.avg_price_brl)}</td>
-                                    <td>${formatTHB(p.avg_price_thb)}</td>
-                                    <td>${formatBRL(p.revenue_brl)}</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            `;
+                `;
+            });
             
             container.innerHTML = html;
+        }
+
+        function filterOptimizeProducts() {
+            const search = document.getElementById('optimizeProductSearch').value.toLowerCase();
+            const filtered = allProducts.filter(p => 
+                p.product_id.toLowerCase().includes(search) || 
+                p.category.toLowerCase().includes(search)
+            );
+            displayOptimizeProducts(filtered);
+        }
+
+        function selectProduct(productId, element) {
+            // Remove previous selection
+            document.querySelectorAll('.product-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            
+            // Add selection
+            element.classList.add('selected');
+            selectedProductId = productId;
+            
+            showToast('Product selected: ' + productId.substring(0, 30) + '...', 'info');
         }
 
         // Load Dashboard Data
@@ -640,7 +684,7 @@
                 document.getElementById('totalRevenueBRL').textContent = formatBRL(metrics.total_revenue_brl);
                 document.getElementById('totalRevenueTHB').textContent = formatTHB(metrics.total_revenue_thb);
                 document.getElementById('totalSales').textContent = formatNumber(metrics.total_sales);
-                // document.getElementById('modelAccuracy').textContent = metrics.model_accuracy.toFixed(3);
+                document.getElementById('totalProducts').textContent = formatNumber(metrics.total_products);
                 document.getElementById('revenueChange').textContent = `${metrics.revenue_change > 0 ? '+' : ''}${metrics.revenue_change.toFixed(1)}%`;
                 document.getElementById('salesChange').textContent = `${metrics.sales_change > 0 ? '+' : ''}${metrics.sales_change.toFixed(1)}%`;
                 
@@ -677,8 +721,8 @@
                     datasets: [{
                         label: 'Sales',
                         data: data.sales,
-                        borderColor: '#3b82f6',
-                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderColor: '#ec4899',
+                        backgroundColor: 'rgba(236, 72, 153, 0.1)',
                         tension: 0.4,
                         fill: true
                     }]
@@ -718,22 +762,25 @@
 
         // Optimize Price
         async function optimizePrice() {
-            const category = document.getElementById('optimizeCategorySelect').value;
-            const cost = parseFloat(document.getElementById('productCost').value);
-            const priceRange = parseFloat(document.getElementById('priceRange').value) / 100;
-            
-            if (!category) {
-                showToast('Please select a category', 'error');
+            if (!selectedProductId) {
+                showToast('Please select a product first', 'error');
                 return;
             }
+            
+            const cost = parseFloat(document.getElementById('productCost').value);
+            const priceRange = parseFloat(document.getElementById('priceRange').value) / 100;
             
             showToast('Optimizing price...', 'info');
             
             try {
-                const res = await fetch(`${API_URL}/optimize/category`, {
+                const res = await fetch(`${API_URL}/optimize/product`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ category, cost, price_range: priceRange })
+                    body: JSON.stringify({ 
+                        product_id: selectedProductId, 
+                        cost, 
+                        price_range: priceRange 
+                    })
                 });
                 
                 const data = await res.json();
@@ -755,8 +802,9 @@
             
             let html = `
                 <div class="optimization-result">
-                    <h3>Optimization Results for ${result.category}</h3>
-                    <p style="font-size: 12px; color: #64748b;">Using top product: ${result.product_id}</p>
+                    <h3>Optimization Results</h3>
+                    <p style="font-size: 12px; color: #64748b;">Product: ${result.product_id_short}</p>
+                    <p style="font-size: 12px; color: #64748b;">Category: ${result.category}</p>
                     
                     <div class="price-comparison">
                         <div class="price-box">
@@ -886,9 +934,9 @@
         async function trainModel() {
             const button = document.getElementById('trainButton');
             button.disabled = true;
-            button.textContent = 'Training...';
+            button.textContent = 'Training Fashion Model...';
             
-            showToast('Model training started...', 'info');
+            showToast('Model training started (Fashion products only)...', 'info');
             
             try {
                 const res = await fetch(`${API_URL}/model/train`, {
@@ -898,21 +946,33 @@
                 const data = await res.json();
                 
                 if (res.ok) {
-                    
-                    // --- (การเปลี่ยนแปลง) ---
-                    // เราจะเปลี่ยนส่วนนี้
                     document.getElementById('trainingResult').innerHTML = `
                         <div class="card" style="margin-top: 20px; background: #f0fdf4; border-color: #86efac;">
-                            <h3>✅ Training Complete!</h3>
-                            
+                            <h3>✅ Training Complete! (Fashion Products)</h3>
+                            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 16px;">
+                                <div>
+                                    <p><strong>Training Time:</strong> ${data.training_time}s</p>
+                                    <p><strong>Dataset Size:</strong> ${formatNumber(data.data_size)} records</p>
+                                    <p><strong>Products:</strong> ${formatNumber(data.num_products)} fashion items</p>
+                                    <p><strong>Categories:</strong> ${data.num_categories} fashion categories</p>
+                                </div>
+                                <div>
+                                    <p><strong>R² Score (Test):</strong> ${data.metrics.test_r2}</p>
+                                    <p><strong>MAE:</strong> ${data.metrics.test_mae}</p>
+                                    <p><strong>RMSE:</strong> ${data.metrics.test_rmse}</p>
+                                    <p><strong>MAPE:</strong> ${data.metrics.test_mape}%</p>
+                                </div>
                             </div>
+                            <p style="margin-top: 16px; color: #059669; font-weight: 600;">
+                                🎯 Model Type: ${data.product_type}
+                            </p>
+                        </div>
                     `;
-                    // --- (สิ้นสุดการเปลี่ยนแปลง) ---
                     
-                    showToast('Model trained successfully!', 'success');
+                    showToast('Fashion model trained successfully!', 'success');
                     
-                    // Reload categories after training
-                    loadCategories();
+                    // Reload dashboard
+                    loadDashboard();
                 } else {
                     showToast(data.error, 'error');
                 }
@@ -920,7 +980,7 @@
                 showToast('Training error: ' + error.message, 'error');
             } finally {
                 button.disabled = false;
-                button.textContent = 'Train Model';
+                button.textContent = 'Train Model (Fashion Only)';
             }
         }
 
