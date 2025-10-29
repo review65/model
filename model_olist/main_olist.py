@@ -250,6 +250,9 @@ df = df.sort_values(by=['product_id', 'Date'])
 le_cat = LabelEncoder()
 df['category_encoded'] = le_cat.fit_transform(df['product_category_name_english'])
 
+le_product = LabelEncoder()
+df['product_encoded'] = le_product.fit_transform(df['product_id'])
+
 df['Year'] = df['Date'].dt.year
 df['Month'] = df['Date'].dt.month
 df['Week'] = df['Date'].dt.isocalendar().week.astype(int)
@@ -294,7 +297,7 @@ print(f"✓ Total records: {len(df):,}")
 # =============================================================================
 print("\n=== Preparing Train/Test Split (Product-Level) ===")
 feature_cols = [
-    'category_encoded', 'seller_state_encoded',
+    'product_encoded', 'category_encoded', 'seller_state_encoded',
     'AverageSellingPrice', 'Weight_g_Mean', 'Length_cm_Mean', 'Height_cm_Mean', 'Width_cm_Mean',
     'Year', 'Month', 'Week', 'Quarter', 'IsWeekend', 'IsHoliday'
 ]
