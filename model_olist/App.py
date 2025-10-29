@@ -1,10 +1,3 @@
-"""
-Dynamic Pricing System - Flask Backend API (Improved)
-เชื่อมต่อระหว่าง ML Model กับ Web Interface
-- เปลี่ยนจาก Product ID เป็น Category dropdown
-- ใช้สกุลเงิน Brazilian Real (R$) + แปลงเป็นบาท
-"""
-
 from flask import Flask, render_template, request, jsonify, send_file
 from flask_cors import CORS
 import pandas as pd
@@ -15,7 +8,9 @@ from datetime import datetime, timedelta
 import os
 from pathlib import Path
 import warnings
+
 warnings.filterwarnings('ignore')
+os.environ['PYTHONWARNINGS'] = 'ignore'
 
 # Import ML libraries
 from sklearn.preprocessing import StandardScaler, LabelEncoder

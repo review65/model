@@ -1,6 +1,4 @@
-# main_olist_with_simple_evaluation.py
-# เพิ่มเฉพาะส่วน Evaluation ที่จำเป็นในโค้ดเดิม
-
+#
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, LabelEncoder
@@ -12,7 +10,9 @@ from lightgbm import LGBMRegressor
 from sklearn.model_selection import train_test_split, cross_val_score
 import time
 
-warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore')
+import os
+os.environ['PYTHONWARNINGS'] = 'ignore'
 
 # =============================================================================
 # CONFIGURATION
@@ -825,10 +825,12 @@ def optimize_price_grid(model, prod_id, price_bounds, cost, scaler, feature_cols
     base_features = base_data.loc[prod_id][feature_cols].values
     price_idx = feature_cols.index('AverageSellingPrice')
     
-    # สร้าง objective function สำหรับ PSO (minimize negative profit)
-    def objective_function(params):
-        price = params[0]
-        
+    prices = np.linspace(price_bounds[0], price_bounds[1], PRICE_GRID_POINTS)
+    
+    best_price = None
+    best_profit = -float('inf')
+    
+    for price in prices:
         features_unscaled = base_features.copy()
         features_unscaled[price_idx] = price
         
@@ -840,24 +842,15 @@ def optimize_price_grid(model, prod_id, price_bounds, cost, scaler, feature_cols
         # Predict demand
         features_scaled = scaler.transform(features_unscaled.reshape(1, -1))
         predicted_qty = model.predict(features_scaled)[0]
-        predicted_qty = max(0, round(predicted_qty))
+        predicted_qty = max(0, predicted_qty)  # ไม่ให้เป็นลบ
         
-        # Calculate profit (negative for minimization)
+        # Calculate profit
         profit = (price - cost) * predicted_qty
-        return -profit  # PSO minimizes, so we negate
-    
-    # ใช้ PSO แทน Grid Search
-    pso = ParticleSwarmOptimizer(
-        objective_function=objective_function,
-        bounds=[(price_bounds[0], price_bounds[1])],  # Single dimension (price)
-        num_particles=30,
-        max_iter=50,
-        verbose=False  # ปิด verbose เพื่อไม่ให้มี output เยอะเกินไป
-    )
-    
-    best_params, best_value = pso.optimize()
-    best_price = best_params[0]
-    best_profit = -best_value  # Convert back to positive profit
+        
+        # Update best if better
+        if profit > best_profit:
+            best_profit = profit
+            best_price = price
     
     return best_price, best_profit
 
@@ -914,3 +907,6 @@ print(f"TOTAL EXPECTED PROFIT: ฿{total_profit:,.2f}")
 print(f"{'='*60}")
 
 print("\n✓ Script finished successfully!")
+
+import sys
+sys.exit(0)  # ออกจากโปรแกรมทันทีหลัง finish
