@@ -8,6 +8,7 @@ import holidays
 from lightgbm import LGBMRegressor
 from sklearn.model_selection import cross_val_score
 from sklearn.ensemble import RandomForestRegressor
+from price_optimizer import ParticleSwarmOptimizer
 import time, os
 
 # XGBoost
@@ -24,10 +25,10 @@ os.environ['PYTHONWARNINGS'] = 'ignore'
 # =============================================================================
 # CONFIGURATION Fashion Products
 # =============================================================================
-MIN_SALES_THRESHOLD = 10  
+MIN_SALES_THRESHOLD = 1  
 TOP_N_PRODUCTS = 500
-NUM_PRODUCTS_TO_OPTIMIZE = 5 
-PRODUCT_COSTS = [10, 15, 20, 12, 18] 
+NUM_PRODUCTS_TO_OPTIMIZE = 10
+PRODUCT_COSTS = [10, 15, 20, 12, 18, 10, 15, 20, 12, 18]
 
 def is_fashion_category(category_name):
     """ตรวจสอบว่าหมวดหมู่เป็น fashion หรือไม่ (เฉพาะที่ขึ้นต้นด้วย fashion_)"""
@@ -230,7 +231,7 @@ print(f"✓ Unique products in dataset: {weekly_data['product_id'].nunique():,}"
 
 # แสดงตัวอย่างสินค้า Top 10
 print("\n📦 Top 10 Fashion Products by Total Sales:")
-top_products_info = weekly_data.groupby(['product_id', 'product_category_name_english'])['QuantitySold'].sum().sort_values(ascending=False).head(10)
+top_products_info = weekly_data.groupby(['product_id', 'product_category_name_english'])['QuantitySold'].sum().sort_values(ascending=False).head(20)
 for (pid, cat), qty in top_products_info.items():
     print(f"  {pid[:30]}... ({cat}): {qty} units")
 
@@ -469,6 +470,7 @@ def optimize_price_grid(model, prod_id, price_bounds, cost, scaler, feature_cols
     return best_price, best_profit
 
 optimization_results = {}
+price_idx = feature_cols.index('AverageSellingPrice') # ย้าย index มาไว้ข้างนอก
 
 for i, prod_id in enumerate(target_products):
     prod_info = df_train[df_train['product_id'] == prod_id].iloc[-1]
@@ -480,6 +482,7 @@ for i, prod_id in enumerate(target_products):
     print(f"Category: {product_name}")
     
     mean_price = price_stats.loc[prod_id, 'mean']
+    # กำหนดช่วงราคา (เช่น 70% ถึง 130% ของราคาเฉลี่ย)
     price_bounds = (mean_price * 0.7, mean_price * 1.3)
     cost = PRODUCT_COSTS[i]
 
@@ -487,24 +490,89 @@ for i, prod_id in enumerate(target_products):
     print(f"Price range: R${price_bounds[0]:.2f} - R${price_bounds[1]:.2f}")
     print(f"Cost: R${cost:.2f}")
 
-    t0 = time.time()
-    optimal_price, max_profit = optimize_price_grid(
+    # === 1. รัน GRID SEARCH ===
+    print("\n--- Running Grid Search ---")
+    t0_grid = time.time()
+    gs_price, gs_profit = optimize_price_grid(
         best_model, prod_id, price_bounds, cost, scaler_X, feature_cols, product_name
     )
-    opt_time = time.time() - t0
+    t_grid = time.time() - t0_grid
+    print(f"   Result: Price=R${gs_price:.2f}, Profit=R${gs_profit:,.2f}, Time={t_grid:.3f}s")
 
+
+    # === 2. รัน PARTICLE SWARM OPTIMIZATION (PSO) ===
+    print("--- Running PSO ---")
+    
+    base_features = base_data.loc[prod_id][feature_cols].values
+
+    def pso_objective(price_array):
+    
+        price = price_array[0] 
+        
+        features_unscaled = base_features.copy()
+        features_unscaled[price_idx] = price 
+
+        
+        if 'AverageSellingPrice_Lag_1' in feature_cols:
+            lag_idx = feature_cols.index('AverageSellingPrice_Lag_1')
+            features_unscaled[lag_idx] = base_features[price_idx]
+
+        features_scaled = scaler_X.transform(features_unscaled.reshape(1, -1))
+        predicted_qty = best_model.predict(features_scaled)[0]
+        predicted_qty = max(0, round(float(predicted_qty)))
+
+        profit = (price - cost) * predicted_qty
+        
+        return -profit
+
+    t0_pso = time.time()
+    
+    pso_bounds = [price_bounds] 
+    
+   
+    optimizer = ParticleSwarmOptimizer(
+        objective_function=pso_objective,
+        bounds=pso_bounds,
+        num_particles=10,  
+        max_iter=30,       
+        verbose=False      
+    )
+    
+    gbest_pos, gbest_val = optimizer.optimize()
+    
+    pso_price = gbest_pos[0]
+    pso_profit = gbest_val 
+    t_pso = time.time() - t0_pso
+    print(f"   Result: Price=R${pso_price:.2f}, Profit=R${pso_profit:,.2f}, Time={t_pso:.3f}s")
+
+
+    # === 3. เปรียบเทียบและเลือกผลลัพธ์ ===
+    print("\n--- Comparison ---")
+    if pso_profit > gs_profit:
+        print(f"✓ WINNER: PSO (Profit R${pso_profit:,.2f} > R${gs_profit:,.2f})")
+        optimal_price = pso_price
+        max_profit = pso_profit
+        opt_time = t_pso
+        opt_method = "PSO"
+    else:
+        print(f"✓ WINNER: Grid Search (Profit R${gs_profit:,.2f} >= R${pso_profit:,.2f})")
+        optimal_price = gs_price
+        max_profit = gs_profit
+        opt_time = t_grid
+        opt_method = "Grid Search"
+
+    # บันทึกผลลัพธ์ (โค้ดส่วนนี้จะเหมือนเดิม แต่เพิ่ม method เข้าไป)
     optimization_results[prod_id] = {
         'product_name': product_name,
         'optimal_price': optimal_price,
         'max_profit': max_profit,
         'current_price': mean_price,
+        'method': opt_method, # เพิ่มว่าใช้วิธีไหน
         'time': opt_time
     }
 
-    print(f"✓ Optimal price: R${optimal_price:.2f}")
-    print(f"✓ Expected profit: R${max_profit:,.2f}")
-    print(f"✓ Price change: {(optimal_price/mean_price - 1)*100:+.1f}%")
-    print(f"✓ Optimization time: {opt_time:.3f}s")
+    print(f"✓ Selected Optimal price: R${optimal_price:.2f}")
+    print(f"✓ Selected Expected profit: R${max_profit:,.2f}")
 
 # =============================================================================
 # SUMMARY (Product-Level)
